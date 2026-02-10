@@ -1,1 +1,1 @@
-"# black-friday-survival" 
+"# black-friday-survival"

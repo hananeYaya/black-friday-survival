@@ -149,7 +149,7 @@ jobs:
   deploy-eks:
     name: Deploy to EKS
     runs-on: ubuntu-latest
-    needs: [validate, build-images]
+    needs: validate
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
 
     steps:

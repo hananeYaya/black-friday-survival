@@ -1,21 +1,20 @@
 version: 2
 updates:
-  - package-ecosystem: "npm"
+  # Mise à jour des GitHub Actions
+  - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "daily"
-    allow:
-      - dependency-type: production
-    groups:
-      medusa:
-        patterns:
-        - "@medusajs*"
-        - "medusa*"
-        update-types:
-        - "minor"
-        - "patch"
-    ignore:
-      - dependency-name: "@medusajs*"
-        update-types: ["version-update:semver-major"]
-      - dependency-name: "medusa*"
-        update-types: ["version-update:semver-major"]
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "github-actions"
+
+  # Mise à jour des images Docker (si vous en utilisez)
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "docker"
+

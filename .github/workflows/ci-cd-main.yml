@@ -13,9 +13,6 @@ env:
   KUBECTL_VERSION: '1.29.0'
 
 jobs:
-  # ═══════════════════════════════════════════════════════════
-  # JOB 1: VALIDATION & TESTS
-  # ═══════════════════════════════════════════════════════════
   validate:
     name: Validation & Tests
     runs-on: ubuntu-latest
@@ -27,13 +24,9 @@ jobs:
       - name: Validate Kubernetes manifests
         run: |
           echo "🔍 Validation des manifests Kubernetes..."
-          
-          # Installer kubeval pour validation
           wget https://github.com/instrumenta/kubeval/releases/latest/download/kubeval-linux-amd64.tar.gz
           tar xf kubeval-linux-amd64.tar.gz
           sudo mv kubeval /usr/local/bin
-          
-          # Valider tous les manifests
           for file in kubernetes-manifests/*.yaml; do
             if [[ "$file" != *"kustomization.yaml"* ]]; then
               echo "Validation de $file"
@@ -45,13 +38,9 @@ jobs:
         run: |
           echo "🔍 Validation Terraform..."
           cd terraform
-          
-          # Installer Terraform
           wget -O- https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
           echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
           sudo apt update && sudo apt install terraform
-          
-          # Valider
           terraform init -backend=false
           terraform fmt -check
           terraform validate
@@ -59,11 +48,8 @@ jobs:
       - name: Lint Scripts
         run: |
           echo "🔍 Lint des scripts Shell..."
-          
-          # Installer shellcheck
+          sudo apt-get update
           sudo apt-get install shellcheck
-          
-          # Vérifier tous les scripts
           find . -name "*.sh" -type f -exec shellcheck {} + || true
 
       - name: Security Scan - Trivy
@@ -77,19 +63,18 @@ jobs:
           exit-code: '0'
 
       - name: Ensure Trivy SARIF
+        if: always()
         run: |
           if [ ! -f trivy-results.sarif ]; then
             echo '{"version":"2.1.0","runs":[]}' > trivy-results.sarif
           fi
 
       - name: Upload Trivy results to GitHub Security
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: 'trivy-results.sarif'
-  # ═══════════════════════════════════════════════════════════
-  # JOB 2: BUILD & PUSH DOCKER IMAGES (si modif dans src/)
-  # ═══════════════════════════════════════════════════════════
+
   build-images:
     name: Build Docker Images
     runs-on: ubuntu-latest
@@ -117,7 +102,6 @@ jobs:
       - name: Check if service changed
         id: changed
         run: |
-          # Vérifier si le service a changé
           if git diff --name-only HEAD~1 HEAD | grep -q "src/${{ matrix.service }}"; then
             echo "changed=true" >> $GITHUB_OUTPUT
           else
@@ -148,9 +132,6 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # ═══════════════════════════════════════════════════════════
-  # JOB 3: DEPLOY TO EKS
-  # ═══════════════════════════════════════════════════════════
   deploy-eks:
     name: Deploy to EKS
     runs-on: ubuntu-latest
@@ -184,16 +165,12 @@ jobs:
       - name: Deploy to Kubernetes
         run: |
           echo "🚀 Déploiement sur EKS..."
-          
-          # Appliquer les manifests (ignorer kustomization.yaml)
           for file in kubernetes-manifests/*.yaml; do
             if [[ "$file" != *"kustomization.yaml"* ]]; then
               echo "Applying $file"
               kubectl apply -f "$file" || echo "⚠️ Warning applying $file"
             fi
           done
-          
-          # Attendre que les déploiements principaux soient ready
           echo "⏳ Attente du rollout..."
           kubectl rollout status deployment/frontend --timeout=5m || echo "⚠️ Frontend rollout timeout"
           kubectl rollout status deployment/productcatalogservice --timeout=5m || echo "⚠️ Catalog rollout timeout"
@@ -206,9 +183,6 @@ jobs:
           kubectl get services
           kubectl get ingress
 
-  # ═══════════════════════════════════════════════════════════
-  # JOB 4: SMOKE TESTS
-  # ═══════════════════════════════════════════════════════════
   smoke-tests:
     name: Smoke Tests
     runs-on: ubuntu-latest
@@ -251,13 +225,10 @@ jobs:
       - name: Test Frontend Accessibility
         run: |
           echo "🧪 Test d'accessibilité du frontend..."
-          
           if [ -z "$INGRESS_URL" ]; then
             echo "❌ LoadBalancer URL non disponible"
             exit 1
           fi
-          
-          # Attendre que l'application réponde
           for i in {1..20}; do
             if curl -s -o /dev/null -w "%{http_code}" "http://$INGRESS_URL" | grep -q "200"; then
               echo "✅ Frontend accessible (HTTP 200)"
@@ -266,28 +237,20 @@ jobs:
             echo "Tentative $i/20..."
             sleep 5
           done
-          
           echo "⚠️ Frontend non accessible après 20 tentatives"
           exit 1
 
       - name: Test Service Health
         run: |
           echo "🧪 Test de santé des services..."
-          
-          # Vérifier que tous les pods sont Running
           NOT_RUNNING=$(kubectl get pods --field-selector=status.phase!=Running --no-headers | wc -l)
-          
           if [ "$NOT_RUNNING" -gt 0 ]; then
             echo "❌ $NOT_RUNNING pods ne sont pas en état Running"
             kubectl get pods
             exit 1
           fi
-          
           echo "✅ Tous les pods sont Running"
 
-  # ═══════════════════════════════════════════════════════════
-  # JOB 5: LOAD TEST (Manuel uniquement)
-  # ═══════════════════════════════════════════════════════════
   load-test:
     name: Load Test
     runs-on: ubuntu-latest
@@ -317,8 +280,6 @@ jobs:
       - name: Run Load Test (1000 users)
         run: |
           echo "🔥 Lancement du test de charge (1000 utilisateurs)..."
-          
-          # Créer le loadgenerator
           cat <<EOF | kubectl apply -f -
           apiVersion: apps/v1
           kind: Deployment
@@ -350,18 +311,13 @@ jobs:
                       cpu: 500m
                       memory: 512Mi
           EOF
-          
-          # Attendre que les loadgenerators démarrent
           echo "⏳ Attente du démarrage des loadgenerators..."
           sleep 60
-          
-          # Vérifier l'état
           kubectl get pods -l app=loadgenerator-ci-test
 
       - name: Monitor Load Test
         run: |
           echo "📊 Surveillance du test de charge (2 minutes)..."
-          
           for i in {1..12}; do
             echo ""
             echo "=== Itération $i/12 ==="
@@ -379,9 +335,6 @@ jobs:
           echo "🧹 Nettoyage des loadgenerators..."
           kubectl delete deployment loadgenerator-ci-test || true
 
-  # ═══════════════════════════════════════════════════════════
-  # JOB 6: NOTIFY
-  # ═══════════════════════════════════════════════════════════
   notify:
     name: Notification
     runs-on: ubuntu-latest
@@ -392,11 +345,9 @@ jobs:
       - name: Send notification
         run: |
           echo "📧 Envoi de notification..."
-          
           if [ "${{ needs.deploy-eks.result }}" == "success" ] && [ "${{ needs.smoke-tests.result }}" == "success" ]; then
             echo "✅ Déploiement réussi !"
           else
             echo "❌ Déploiement échoué"
             exit 1
           fi
-

@@ -1,0 +1,27 @@
+# Exemple de fichier de variables Terraform
+# Copier ce fichier vers terraform.tfvars et remplir avec vos valeurs
+
+# Région AWS
+aws_region = "eu-south-2"  # Espagne
+
+# Nom du cluster
+cluster_name = "eks-bfs-gp12-prod"
+
+# Environnement
+environment = "prod"
+
+# Configuration des node groups
+node_count_min = 3
+node_count_max = 65
+
+# CIDR du VPC
+vpc_cidr = "10.0.0.0/16"
+
+# Tags communs
+common_tags = {
+  Project     = "black-friday-survival"
+  Environment = "prod"
+  ManagedBy   = "terraform"
+  Team        = "bfs-gp12"
+}
+

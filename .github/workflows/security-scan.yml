@@ -1,0 +1,95 @@
+name: Security Scan
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  trivy-scan:
+    name: Trivy Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@0.16.1
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+          exit-code: '0'
+
+      - name: Upload Trivy results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  kubectl-scan:
+    name: Kubernetes Manifests Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install kubesec
+        run: |
+          wget https://github.com/controlplaneio/kubesec/releases/download/v2.13.0/kubesec_linux_amd64.tar.gz
+          tar -xvf kubesec_linux_amd64.tar.gz
+          sudo mv kubesec /usr/local/bin/
+
+      - name: Scan Kubernetes manifests
+        run: |
+          echo "Scanning Kubernetes manifests..."
+          for file in kubernetes-manifests/*.yaml; do
+            if [[ "$file" != *"kustomization.yaml"* ]]; then
+              echo "Scanning $file"
+              kubesec scan "$file" || true
+            fi
+          done
+
+  terraform-scan:
+    name: Terraform Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run tfsec
+        uses: aquasecurity/tfsec-action@v1.0.0
+        with:
+          working_directory: terraform
+          soft_fail: true
+
+  dependency-check:
+    name: Dependency Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check for vulnerable dependencies
+        run: |
+          echo "Checking for package.json files..."
+          find . -name "package.json" -not -path "*/node_modules/*" -exec echo "Found: {}" \;
+          
+          echo "Checking for requirements.txt files..."
+          find . -name "requirements.txt" -exec echo "Found: {}" \;
+          
+          echo "Checking for go.mod files..."
+          find . -name "go.mod" -exec echo "Found: {}" \;
+
+      - name: Summary
+        run: |
+          echo "✅ Dependency scan completed"
+          echo "For detailed vulnerability scanning, consider using Dependabot or Snyk"

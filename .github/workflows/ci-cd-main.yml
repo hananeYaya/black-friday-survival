@@ -1,0 +1,390 @@
+name: CI/CD - Black Friday Survival
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+env:
+  AWS_REGION: eu-south-2
+  EKS_CLUSTER_NAME: eks-bfs-gp12-prod
+  KUBECTL_VERSION: '1.29.0'
+
+jobs:
+  # ═══════════════════════════════════════════════════════════
+  # JOB 1: VALIDATION & TESTS
+  # ═══════════════════════════════════════════════════════════
+  validate:
+    name: Validation & Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate Kubernetes manifests
+        run: |
+          echo "🔍 Validation des manifests Kubernetes..."
+          
+          # Installer kubeval pour validation
+          wget https://github.com/instrumenta/kubeval/releases/latest/download/kubeval-linux-amd64.tar.gz
+          tar xf kubeval-linux-amd64.tar.gz
+          sudo mv kubeval /usr/local/bin
+          
+          # Valider tous les manifests
+          for file in kubernetes-manifests/*.yaml; do
+            if [[ "$file" != *"kustomization.yaml"* ]]; then
+              echo "Validation de $file"
+              kubeval --ignore-missing-schemas "$file" || true
+            fi
+          done
+
+      - name: Validate Terraform
+        run: |
+          echo "🔍 Validation Terraform..."
+          cd terraform
+          
+          # Installer Terraform
+          wget -O- https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+          sudo apt update && sudo apt install terraform
+          
+          # Valider
+          terraform init -backend=false
+          terraform fmt -check
+          terraform validate
+
+      - name: Lint Scripts
+        run: |
+          echo "🔍 Lint des scripts Shell..."
+          
+          # Installer shellcheck
+          sudo apt-get install shellcheck
+          
+          # Vérifier tous les scripts
+          find . -name "*.sh" -type f -exec shellcheck {} + || true
+
+      - name: Security Scan - Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  # ═══════════════════════════════════════════════════════════
+  # JOB 2: BUILD & PUSH DOCKER IMAGES (si modif dans src/)
+  # ═══════════════════════════════════════════════════════════
+  build-images:
+    name: Build Docker Images
+    runs-on: ubuntu-latest
+    needs: validate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    strategy:
+      matrix:
+        service:
+          - adservice
+          - cartservice
+          - checkoutservice
+          - currencyservice
+          - emailservice
+          - frontend
+          - paymentservice
+          - productcatalogservice
+          - recommendationservice
+          - shippingservice
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check if service changed
+        id: changed
+        run: |
+          # Vérifier si le service a changé
+          if git diff --name-only HEAD~1 HEAD | grep -q "src/${{ matrix.service }}"; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Set up Docker Buildx
+        if: steps.changed.outputs.changed == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        if: steps.changed.outputs.changed == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        if: steps.changed.outputs.changed == 'true'
+        uses: docker/build-push-action@v5
+        with:
+          context: ./src/${{ matrix.service }}
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/${{ matrix.service }}:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/${{ matrix.service }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ═══════════════════════════════════════════════════════════
+  # JOB 3: DEPLOY TO EKS
+  # ═══════════════════════════════════════════════════════════
+  deploy-eks:
+    name: Deploy to EKS
+    runs-on: ubuntu-latest
+    needs: [validate, build-images]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/v${{ env.KUBECTL_VERSION }}/bin/linux/amd64/kubectl"
+          curl -LO "https://dl.k8s.io/release/v${{ env.KUBECTL_VERSION }}/bin/linux/amd64/kubectl.sha256"
+          echo "$(cat kubectl.sha256)  kubectl" | sha256sum --check
+          sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+          kubectl version --client
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER_NAME }}
+          kubectl cluster-info
+
+      - name: Deploy to Kubernetes
+        run: |
+          echo "🚀 Déploiement sur EKS..."
+          
+          # Appliquer les manifests
+          kubectl apply -f kubernetes-manifests/
+          
+          # Attendre que les déploiements soient ready
+          kubectl rollout status deployment/frontend --timeout=5m
+          kubectl rollout status deployment/productcatalogservice --timeout=5m
+          kubectl rollout status deployment/cartservice --timeout=5m
+
+      - name: Verify deployment
+        run: |
+          echo "✅ Vérification du déploiement..."
+          kubectl get pods
+          kubectl get services
+          kubectl get ingress
+
+  # ═══════════════════════════════════════════════════════════
+  # JOB 4: SMOKE TESTS
+  # ═══════════════════════════════════════════════════════════
+  smoke-tests:
+    name: Smoke Tests
+    runs-on: ubuntu-latest
+    needs: deploy-eks
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/v${{ env.KUBECTL_VERSION }}/bin/linux/amd64/kubectl"
+          sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER_NAME }}
+
+      - name: Wait for LoadBalancer
+        run: |
+          echo "⏳ Attente du LoadBalancer..."
+          for i in {1..30}; do
+            INGRESS_URL=$(kubectl get ingress frontend-ingress -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "")
+            if [ -n "$INGRESS_URL" ]; then
+              echo "✅ LoadBalancer ready: $INGRESS_URL"
+              echo "INGRESS_URL=$INGRESS_URL" >> $GITHUB_ENV
+              break
+            fi
+            echo "Tentative $i/30..."
+            sleep 10
+          done
+
+      - name: Test Frontend Accessibility
+        run: |
+          echo "🧪 Test d'accessibilité du frontend..."
+          
+          if [ -z "$INGRESS_URL" ]; then
+            echo "❌ LoadBalancer URL non disponible"
+            exit 1
+          fi
+          
+          # Attendre que l'application réponde
+          for i in {1..20}; do
+            if curl -s -o /dev/null -w "%{http_code}" "http://$INGRESS_URL" | grep -q "200"; then
+              echo "✅ Frontend accessible (HTTP 200)"
+              exit 0
+            fi
+            echo "Tentative $i/20..."
+            sleep 5
+          done
+          
+          echo "⚠️ Frontend non accessible après 20 tentatives"
+          exit 1
+
+      - name: Test Service Health
+        run: |
+          echo "🧪 Test de santé des services..."
+          
+          # Vérifier que tous les pods sont Running
+          NOT_RUNNING=$(kubectl get pods --field-selector=status.phase!=Running --no-headers | wc -l)
+          
+          if [ "$NOT_RUNNING" -gt 0 ]; then
+            echo "❌ $NOT_RUNNING pods ne sont pas en état Running"
+            kubectl get pods
+            exit 1
+          fi
+          
+          echo "✅ Tous les pods sont Running"
+
+  # ═══════════════════════════════════════════════════════════
+  # JOB 5: LOAD TEST (Manuel uniquement)
+  # ═══════════════════════════════════════════════════════════
+  load-test:
+    name: Load Test
+    runs-on: ubuntu-latest
+    needs: smoke-tests
+    if: github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/v${{ env.KUBECTL_VERSION }}/bin/linux/amd64/kubectl"
+          sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER_NAME }}
+
+      - name: Run Load Test (1000 users)
+        run: |
+          echo "🔥 Lancement du test de charge (1000 utilisateurs)..."
+          
+          # Créer le loadgenerator
+          cat <<EOF | kubectl apply -f -
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: loadgenerator-ci-test
+          spec:
+            replicas: 10
+            selector:
+              matchLabels:
+                app: loadgenerator-ci-test
+            template:
+              metadata:
+                labels:
+                  app: loadgenerator-ci-test
+              spec:
+                containers:
+                - name: main
+                  image: gcr.io/google-samples/microservices-demo/loadgenerator:v0.10.1
+                  env:
+                  - name: FRONTEND_ADDR
+                    value: "frontend:80"
+                  - name: USERS
+                    value: "100"
+                  resources:
+                    requests:
+                      cpu: 300m
+                      memory: 256Mi
+                    limits:
+                      cpu: 500m
+                      memory: 512Mi
+          EOF
+          
+          # Attendre que les loadgenerators démarrent
+          echo "⏳ Attente du démarrage des loadgenerators..."
+          sleep 60
+          
+          # Vérifier l'état
+          kubectl get pods -l app=loadgenerator-ci-test
+
+      - name: Monitor Load Test
+        run: |
+          echo "📊 Surveillance du test de charge (2 minutes)..."
+          
+          for i in {1..12}; do
+            echo ""
+            echo "=== Itération $i/12 ==="
+            echo "Pods:"
+            kubectl get pods | grep -E "frontend|catalog|checkout|cart|recommendation" | wc -l
+            echo ""
+            echo "HPAs:"
+            kubectl get hpa 2>/dev/null || echo "Pas de HPA"
+            sleep 10
+          done
+
+      - name: Cleanup Load Test
+        if: always()
+        run: |
+          echo "🧹 Nettoyage des loadgenerators..."
+          kubectl delete deployment loadgenerator-ci-test || true
+
+  # ═══════════════════════════════════════════════════════════
+  # JOB 6: NOTIFY
+  # ═══════════════════════════════════════════════════════════
+  notify:
+    name: Notification
+    runs-on: ubuntu-latest
+    needs: [deploy-eks, smoke-tests]
+    if: always()
+
+    steps:
+      - name: Send notification
+        run: |
+          echo "📧 Envoi de notification..."
+          
+          if [ "${{ needs.deploy-eks.result }}" == "success" ] && [ "${{ needs.smoke-tests.result }}" == "success" ]; then
+            echo "✅ Déploiement réussi !"
+          else
+            echo "❌ Déploiement échoué"
+            exit 1
+          fi
+

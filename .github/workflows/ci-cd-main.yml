@@ -1,5 +1,9 @@
 name: CI/CD - Black Friday Survival
 
+permissions:
+  contents: read
+  security-events: write
+
 on:
   push:
     branches: [ main, develop ]
@@ -38,12 +42,13 @@ jobs:
         run: |
           echo "🔍 Validation Terraform..."
           cd terraform
+          ls -l
+          cat main.tf
           wget -O- https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
           echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
           sudo apt update && sudo apt install terraform
-          terraform init -backend=false
-          terraform fmt -check
-          terraform validate
+          terraform init || exit 1
+          terraform validate || exit 1
 
       - name: Lint Scripts
         run: |

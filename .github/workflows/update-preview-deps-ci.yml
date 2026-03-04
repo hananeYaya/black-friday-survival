@@ -12,7 +12,7 @@ jobs:
           access_token: ${{ github.token }}
 
       - name: Checkout
-        uses: actions/checkout@v2.3.5
+        uses: actions/checkout@v6.0.2
         with:
           ref: 'ci'
 

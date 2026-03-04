@@ -345,7 +345,7 @@ jobs:
     if: always()
 
     steps:
-      - name: Send notification
+      - name: Send final notification
         run: |
           echo "📧 Envoi de notification..."
           if [ "${{ needs.deploy-eks.result }}" == "failure" ] || [ "${{ needs.smoke-tests.result }}" == "failure" ]; then

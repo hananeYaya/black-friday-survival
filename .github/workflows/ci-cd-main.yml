@@ -5,6 +5,8 @@ permissions:
   security-events: write
 
 on:
+  push:
+    branches: [ main, develop ]
   pull_request:
     branches: [ main, develop ]
   workflow_dispatch:
@@ -355,3 +357,4 @@ jobs:
             echo "⚠️ Déploiement ou tests ignorés: CI notification neutre."
           else
             echo "✅ Déploiement réussi !"
+          fi

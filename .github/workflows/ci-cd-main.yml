@@ -349,9 +349,10 @@ jobs:
         run: |
           echo "📧 Envoi de notification..."
           if [ "${{ needs.deploy-eks.result }}" == "failure" ] || [ "${{ needs.smoke-tests.result }}" == "failure" ]; then
-            echo "❌ Déploiement échoué"
-            exit 1
+          echo "❌ Déploiement échoué"
+          exit 1
           elif [ "${{ needs.deploy-eks.result }}" == "skipped" ] || [ "${{ needs.smoke-tests.result }}" == "skipped" ]; then
-            echo "⚠️ Déploiement ou tests ignorés: CI notification neutre."
+        echo "⚠️ Déploiement ou tests ignorés: CI notification neutre."
           else
-            echo "✅ Déploiement réussi !"
+          echo "✅ Déploiement réussi !"
+          fi

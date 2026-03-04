@@ -1,100 +1,220 @@
-# Copyright 2022 Google LLC
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# VPC Module (conditional creation)
+module "vpc" {
+  count   = var.create_vpc ? 1 : 0
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "~> 5.0"
 
-# Definition of local variables
-locals {
-  base_apis = [
-    "container.googleapis.com",
-    "monitoring.googleapis.com",
-    "cloudtrace.googleapis.com",
-    "cloudprofiler.googleapis.com"
-  ]
-  memorystore_apis = ["redis.googleapis.com"]
-  cluster_name     = google_container_cluster.my_cluster.name
-}
+  name = "${var.cluster_name}-vpc"
+  cidr = var.vpc_cidr
 
-# Enable Google Cloud APIs
-module "enable_google_apis" {
-  source  = "terraform-google-modules/project-factory/google//modules/project_services"
-  version = "~> 18.0"
+  azs             = var.availability_zones
+  private_subnets = var.private_subnet_cidrs
+  public_subnets  = var.public_subnet_cidrs
 
-  project_id                  = var.gcp_project_id
-  disable_services_on_destroy = false
+  enable_nat_gateway   = true
+  single_nat_gateway   = false # 3 NAT Gateways pour haute disponibilité
+  enable_dns_hostnames = true
+  enable_dns_support   = true
 
-  # activate_apis is the set of base_apis and the APIs required by user-configured deployment options
-  activate_apis = concat(local.base_apis, var.memorystore ? local.memorystore_apis : [])
-}
-
-# Create GKE cluster
-resource "google_container_cluster" "my_cluster" {
-
-  name     = var.name
-  location = var.region
-
-  # Enable autopilot for this cluster
-  enable_autopilot = true
-
-  # Set an empty ip_allocation_policy to allow autopilot cluster to spin up correctly
-  ip_allocation_policy {
+  # Tags required for EKS
+  public_subnet_tags = {
+    "kubernetes.io/role/elb"                    = "1"
+    "kubernetes.io/cluster/${var.cluster_name}" = "shared"
   }
 
-  # Avoid setting deletion_protection to false
-  # until you're ready (and certain you want) to destroy the cluster.
-  # deletion_protection = false
-
-  depends_on = [
-    module.enable_google_apis
-  ]
-}
-
-# Get credentials for cluster
-module "gcloud" {
-  source  = "terraform-google-modules/gcloud/google"
-  version = "~> 4.0"
-
-  platform              = "linux"
-  additional_components = ["kubectl", "beta"]
-
-  create_cmd_entrypoint = "gcloud"
-  # Module does not support explicit dependency
-  # Enforce implicit dependency through use of local variable
-  create_cmd_body = "container clusters get-credentials ${local.cluster_name} --zone=${var.region} --project=${var.gcp_project_id}"
-}
-
-# Apply YAML kubernetes-manifest configurations
-resource "null_resource" "apply_deployment" {
-  provisioner "local-exec" {
-    interpreter = ["bash", "-exc"]
-    command     = "kubectl apply -k ${var.filepath_manifest} -n ${var.namespace}"
+  private_subnet_tags = {
+    "kubernetes.io/role/internal-elb"           = "1"
+    "kubernetes.io/cluster/${var.cluster_name}" = "shared"
   }
 
-  depends_on = [
-    module.gcloud
-  ]
+  tags = {
+    Project     = var.project_name
+    Environment = var.environment
+    ManagedBy   = "Terraform"
+  }
 }
 
-# Wait condition for all Pods to be ready before finishing
-resource "null_resource" "wait_conditions" {
-  provisioner "local-exec" {
-    interpreter = ["bash", "-exc"]
-    command     = <<-EOT
-    kubectl wait --for=condition=AVAILABLE apiservice/v1beta1.metrics.k8s.io --timeout=180s
-    kubectl wait --for=condition=ready pods --all -n ${var.namespace} --timeout=280s
-    EOT
+# EKS Cluster Module
+module "eks" {
+  source  = "terraform-aws-modules/eks/aws"
+  version = "~> 20.31"
+
+  cluster_name    = var.cluster_name
+  cluster_version = var.kubernetes_version
+
+  # Use created VPC or existing one
+  vpc_id     = var.create_vpc ? module.vpc[0].vpc_id : var.vpc_id
+  subnet_ids = var.create_vpc ? module.vpc[0].private_subnets : var.subnet_ids
+
+  # Enable IRSA for pod-level IAM roles
+  enable_irsa = true
+
+  # Cluster endpoint configuration
+  cluster_endpoint_public_access  = true
+  cluster_endpoint_private_access = true
+
+  # CloudWatch Logging
+  cluster_enabled_log_types              = ["api", "audit", "authenticator", "controllerManager", "scheduler"]
+  cloudwatch_log_group_retention_in_days = var.log_retention_days
+
+  # EKS Managed Node Groups
+  eks_managed_node_groups = {
+    # General purpose node group
+    general = {
+      name           = "general-${var.project_name}"
+      instance_types = ["t3.medium"]
+
+      min_size     = 3
+      max_size     = 20
+      desired_size = 5
+
+      labels = {
+        role = "general"
+      }
+
+      tags = {
+        NodeGroup = "general"
+      }
+    }
+
+    # High-performance node group for peak loads (Black Friday)
+    high_performance = {
+      name           = "high-perf-${var.project_name}"
+      instance_types = ["c5.xlarge"]
+
+      min_size     = 0
+      max_size     = 30
+      desired_size = 2
+
+      labels = {
+        role         = "high-performance"
+        black_friday = "enabled"
+      }
+
+      taints = [{
+        key    = "high-performance"
+        value  = "true"
+        effect = "NO_SCHEDULE"
+      }]
+
+      tags = {
+        NodeGroup = "high-performance"
+      }
+    }
+
+    # Spot instances for cost optimization
+    spot = {
+      name           = "spot-${var.project_name}"
+      instance_types = ["t3.large", "t3.medium"]  # t3a non disponible en eu-south-2
+      capacity_type  = "SPOT"
+
+      min_size     = 0
+      max_size     = 15
+      desired_size = 3
+
+      labels = {
+        role = "spot"
+      }
+
+      tags = {
+        NodeGroup = "spot"
+      }
+    }
   }
 
-  depends_on = [
-    resource.null_resource.apply_deployment
-  ]
+  # EKS Addons
+  cluster_addons = {
+    coredns = {
+      most_recent = true
+    }
+    kube-proxy = {
+      most_recent = true
+    }
+    vpc-cni = {
+      most_recent = true
+    }
+    aws-ebs-csi-driver = {
+      most_recent              = true
+      service_account_role_arn = module.ebs_csi_irsa_role.iam_role_arn
+    }
+  }
+
+  # Cluster access entry
+  enable_cluster_creator_admin_permissions = true
+
+  tags = {
+    Project     = "BlackFridaySurvival"
+    Environment = var.environment
+    ManagedBy   = "Terraform"
+  }
+}
+
+# IAM role for EBS CSI driver
+module "ebs_csi_irsa_role" {
+  source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
+  version = "~> 5.30"
+
+  role_name = "${var.cluster_name}-ebs-csi"
+
+  attach_ebs_csi_policy = true
+
+  oidc_providers = {
+    ex = {
+      provider_arn               = module.eks.oidc_provider_arn
+      namespace_service_accounts = ["kube-system:ebs-csi-controller-sa"]
+    }
+  }
+
+  tags = {
+    Project     = "BlackFridaySurvival"
+    Environment = var.environment
+    ManagedBy   = "Terraform"
+  }
+}
+
+# IAM role for Cluster Autoscaler
+module "cluster_autoscaler_irsa_role" {
+  source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
+  version = "~> 5.30"
+
+  role_name = "${var.cluster_name}-cluster-autoscaler"
+
+  attach_cluster_autoscaler_policy = true
+  cluster_autoscaler_cluster_names = [module.eks.cluster_name]
+
+  oidc_providers = {
+    ex = {
+      provider_arn               = module.eks.oidc_provider_arn
+      namespace_service_accounts = ["kube-system:cluster-autoscaler"]
+    }
+  }
+
+  tags = {
+    Project     = "BlackFridaySurvival"
+    Environment = var.environment
+    ManagedBy   = "Terraform"
+  }
+}
+
+# IAM role for AWS Load Balancer Controller
+module "aws_load_balancer_controller_irsa_role" {
+  source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
+  version = "~> 5.30"
+
+  role_name = "${var.cluster_name}-aws-load-balancer-controller"
+
+  attach_load_balancer_controller_policy = true
+
+  oidc_providers = {
+    ex = {
+      provider_arn               = module.eks.oidc_provider_arn
+      namespace_service_accounts = ["kube-system:aws-load-balancer-controller"]
+    }
+  }
+
+  tags = {
+    Project     = var.project_name
+    Environment = var.environment
+    ManagedBy   = "Terraform"
+  }
 }

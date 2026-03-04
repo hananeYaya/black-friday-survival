@@ -53,7 +53,7 @@ jobs:
           REPO: ${{ github.event.repository.name }}
 
       - name: Open PR with changes
-        uses: peter-evans/create-pull-request@v5
+        uses: peter-evans/create-pull-request@v8
         with:
           title: "chore(master): updated preview dependencies [automated]"
           body: "This PR updates preview dependencies to the latest versions."

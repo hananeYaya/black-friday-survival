@@ -55,7 +55,7 @@ jobs:
           REPO: ${{ github.event.repository.name }}
 
       - name: Open PR with changes
-        uses: peter-evans/create-pull-request@v5
+        uses: peter-evans/create-pull-request@v8
         with:
           title: "chore(ci): updated preview dependencies [automated]"
           commit-message: "chore(ci): updated preview dependencies [automated]"

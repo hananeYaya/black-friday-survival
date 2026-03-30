@@ -35,10 +35,13 @@ echo -e "${BLUE}Select test type:${NC}"
 echo "1) Quick test (2 minutes)"
 echo "2) Standard test (5 minutes)"
 echo "3) Stress test (10 minutes)"
-echo "4) Custom configuration"
+echo "4) Black Friday simulation (8 minutes)"
+echo "5) Database load test (2 minutes)"
+echo "6) Custom configuration"
+echo "7) Generate summary report"
 echo ""
 
-read -p "Choice [1-4]: " choice
+read -p "Choice [1-7]: " choice
 
 case $choice in
     1)
@@ -59,6 +62,16 @@ case $choice in
         rm stress-test.yml
         ;;
     4)
+        echo -e "${GREEN}Running Black Friday simulation...${NC}"
+        artillery run --output blackfriday-report.json black-friday-test.yml
+        artillery report blackfriday-report.json
+        ;;
+    5)
+        echo -e "${GREEN}Running database load test...${NC}"
+        artillery run --output db-report.json db-load-test.yml
+        artillery report db-report.json
+        ;;
+    6)
         echo -e "${YELLOW}Custom configuration:${NC}"
         read -p "Test duration (seconds): " duration
         read -p "Arrival rate (requests/second): " rate
@@ -115,6 +128,10 @@ EOF
         artillery run --output "${output_file}.json" custom-test.yml
         artillery report "${output_file}.json"
         rm custom-test.yml
+        ;;
+    7)
+        echo -e "${GREEN}Generating summary report...${NC}"
+        node generate-report.js
         ;;
     *)
         echo -e "${RED}Invalid choice${NC}"

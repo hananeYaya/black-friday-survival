@@ -1,0 +1,46 @@
+config:
+  target: "http://localhost:9000"
+  phases:
+    - duration: 120
+      arrivalRate: 20
+      name: Database load test
+  defaults:
+    headers:
+      Content-Type: "application/json"
+scenarios:
+  - name: "Product search and filtering"
+    weight: 40
+    flow:
+      - get:
+          url: "/store/products?search=phone&limit=20"
+      - get:
+          url: "/store/products?category=electronics&limit=20"
+      - get:
+          url: "/store/products?price_list=premium&limit=20"
+      - get:
+          url: "/store/products?tags=featured&limit=20"
+  - name: "Order history retrieval"
+    weight: 30
+    flow:
+      - get:
+          url: "/store/orders?limit=10&offset={{ $randomInt(0, 100) }}"
+      - get:
+          url: "/store/orders/{{ $randomString() }}/line-items"
+      - get:
+          url: "/store/orders?status=completed&limit=5"
+  - name: "Inventory checks"
+    weight: 20
+    flow:
+      - get:
+          url: "/store/variants/{{ $randomInt(1, 1000) }}"
+      - get:
+          url: "/store/variants?inventory_quantity=gt:0&limit=50"
+      - get:
+          url: "/store/products/{{ $randomInt(1, 100) }}/variants"
+  - name: "Customer data access"
+    weight: 10
+    flow:
+      - get:
+          url: "/store/customers/{{ $randomString() }}"
+      - get:
+          url: "/store/customers?limit=10&offset={{ $randomInt(0, 50) }}"

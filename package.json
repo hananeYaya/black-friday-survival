@@ -23,6 +23,7 @@
     "test:load": "artillery run load-tests/load-test.yml",
     "test:load:report": "artillery run --output load-tests/report.json load-tests/load-test.yml && artillery report load-tests/report.json",
     "test:load:interactive": "./load-tests/run-load-tests.sh",
+    "test:load:report": "node load-tests/generate-report.js",
     "docker:up": "docker compose up --build -d",
     "docker:down": "docker compose down"
   },

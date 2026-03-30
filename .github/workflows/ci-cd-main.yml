@@ -58,7 +58,7 @@ jobs:
           find . -name "*.sh" -type f -exec shellcheck {} + || true
 
       - name: Security Scan - Trivy
-        uses: aquasecurity/trivy-action@0.16.1
+        uses: aquasecurity/trivy-action@0.19.0
         with:
           scan-type: 'fs'
           scan-ref: '.'
@@ -357,4 +357,3 @@ jobs:
             echo "⚠️ Déploiement ou tests ignorés: CI notification neutre."
           else
             echo "✅ Déploiement réussi !"
-          fi

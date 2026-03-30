@@ -20,6 +20,9 @@
     "test:integration:http": "TEST_TYPE=integration:http NODE_OPTIONS=--experimental-vm-modules jest --silent=false --runInBand --forceExit",
     "test:integration:modules": "TEST_TYPE=integration:modules NODE_OPTIONS=--experimental-vm-modules jest --silent=false --runInBand --forceExit",
     "test:unit": "TEST_TYPE=unit NODE_OPTIONS=--experimental-vm-modules jest --silent --runInBand --forceExit",
+    "test:load": "artillery run load-tests/load-test.yml",
+    "test:load:report": "artillery run --output load-tests/report.json load-tests/load-test.yml && artillery report load-tests/report.json",
+    "test:load:interactive": "./load-tests/run-load-tests.sh",
     "docker:up": "docker compose up --build -d",
     "docker:down": "docker compose down"
   },
@@ -37,6 +40,7 @@
     "@types/node": "^20.12.11",
     "@types/react": "^18.3.2",
     "@types/react-dom": "^18.2.25",
+    "artillery": "^2.0.8",
     "jest": "^29.7.0",
     "prop-types": "^15.8.1",
     "react": "^18.3.1",

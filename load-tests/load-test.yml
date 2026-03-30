@@ -1,0 +1,79 @@
+config:
+  target: "http://localhost:9000"
+  phases:
+    - duration: 60
+      arrivalRate: 5
+      name: Warm up phase
+    - duration: 120
+      arrivalRate: 5
+      rampTo: 50
+      name: Ramp up load
+    - duration: 60
+      arrivalRate: 50
+      name: Sustained load
+  defaults:
+    headers:
+      Content-Type: "application/json"
+scenarios:
+  - name: "Browse products"
+    weight: 40
+    flow:
+      - get:
+          url: "/store/products"
+          expect:
+            - statusCode: 200
+  - name: "View product details"
+    weight: 30
+    flow:
+      - get:
+          url: "/store/products"
+      - think: 1
+      - get:
+          url: "/store/products/{{ $randomInt(1, 100) }}"
+          expect:
+            - statusCode: 200
+  - name: "Add to cart"
+    weight: 20
+    flow:
+      - post:
+          url: "/store/carts"
+          json:
+            region_id: "reg_01HXXXXXXXXXXXXXXXXXXXXX"
+          capture:
+            json: "$.cart.id"
+            as: "cart_id"
+      - post:
+          url: "/store/carts/{{ cart_id }}/line-items"
+          json:
+            variant_id: "variant_01HXXXXXXXXXXXXXXXXXXXXX"
+            quantity: 1
+          expect:
+            - statusCode: 201
+  - name: "Checkout process"
+    weight: 10
+    flow:
+      - post:
+          url: "/store/carts"
+          json:
+            region_id: "reg_01HXXXXXXXXXXXXXXXXXXXXX"
+          capture:
+            json: "$.cart.id"
+            as: "cart_id"
+      - post:
+          url: "/store/carts/{{ cart_id }}/line-items"
+          json:
+            variant_id: "variant_01HXXXXXXXXXXXXXXXXXXXXX"
+            quantity: 1
+      - post:
+          url: "/store/carts/{{ cart_id }}/complete"
+          json:
+            billing_address:
+              first_name: "Test"
+              last_name: "User"
+              address_1: "123 Test St"
+              city: "Test City"
+              country_code: "US"
+              postal_code: "12345"
+            email: "test@example.com"
+          expect:
+            - statusCode: 200

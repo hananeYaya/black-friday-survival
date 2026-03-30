@@ -77,8 +77,15 @@ jobs:
       - name: Upload Trivy results to GitHub Security
         uses: github/codeql-action/upload-sarif@v4
         if: always()
+        continue-on-error: true
         with:
           sarif_file: 'trivy-results.sarif'
+
+      - name: Log SARIF content (debug)
+        if: always()
+        run: |
+          echo "Contenu du fichier trivy-results.sarif :"
+          cat trivy-results.sarif || echo "Fichier SARIF introuvable"
 
   build-images:
     name: Build Docker Images
@@ -357,4 +364,3 @@ jobs:
             echo "⚠️ Déploiement ou tests ignorés: CI notification neutre."
           else
             echo "✅ Déploiement réussi !"
-          fi

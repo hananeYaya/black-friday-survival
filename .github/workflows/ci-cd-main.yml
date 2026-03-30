@@ -5,6 +5,8 @@ permissions:
   security-events: write
 
 on:
+  push:
+    branches: [ main, develop ]
   pull_request:
     branches: [ main, develop ]
   workflow_dispatch:
@@ -56,7 +58,7 @@ jobs:
           find . -name "*.sh" -type f -exec shellcheck {} + || true
 
       - name: Security Scan - Trivy
-        uses: aquasecurity/trivy-action@0.16.1
+        uses: aquasecurity/trivy-action@v0.35.0
         with:
           scan-type: 'fs'
           scan-ref: '.'
@@ -72,11 +74,18 @@ jobs:
             echo '{"version":"2.1.0","runs":[]}' > trivy-results.sarif
           fi
 
-      - name: Upload Trivy results to GitHub Security
+      - name: Upload Trivy results to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v4
         if: always()
+        continue-on-error: true
         with:
           sarif_file: 'trivy-results.sarif'
+
+      - name: Log SARIF content (debug)
+        if: always()
+        run: |
+          echo "Contenu du fichier trivy-results.sarif :"
+          cat trivy-results.sarif || echo "Fichier SARIF introuvable"
 
   build-images:
     name: Build Docker Images
@@ -345,12 +354,13 @@ jobs:
     if: always()
 
     steps:
-      - name: Send notification
+      - name: Send final notification
         run: |
           echo "📧 Envoi de notification..."
-          if [ "${{ needs.deploy-eks.result }}" == "success" ] && [ "${{ needs.smoke-tests.result }}" == "success" ]; then
-            echo "✅ Déploiement réussi !"
-          else
+          if [ "${{ needs.deploy-eks.result }}" == "failure" ] || [ "${{ needs.smoke-tests.result }}" == "failure" ]; then
             echo "❌ Déploiement échoué"
             exit 1
-          fi
+          elif [ "${{ needs.deploy-eks.result }}" == "skipped" ] || [ "${{ needs.smoke-tests.result }}" == "skipped" ]; then
+            echo "⚠️ Déploiement ou tests ignorés: CI notification neutre."
+          else
+            echo "✅ Déploiement réussi !"

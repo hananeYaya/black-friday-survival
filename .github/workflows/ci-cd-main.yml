@@ -127,7 +127,7 @@ jobs:
 
       - name: Build and push
         if: steps.changed.outputs.changed == 'true'
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: ./src/${{ matrix.service }}
           push: true

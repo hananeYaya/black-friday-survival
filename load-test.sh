@@ -1,8 +1,8 @@
 #!/bin/bash
 set -e
 
-echo "🧪 Tests de charge progressifs pour Black Friday Survival"
-echo "=========================================================="
+echo "🧪 Test de charge pour Black Friday Survival"
+echo "============================================="
 echo ""
 
 # Variables
@@ -19,55 +19,74 @@ fi
 echo "🌐 URL Frontend: http://$FRONTEND_URL"
 echo ""
 
-# Demander le nombre d'utilisateurs pour le test
+# Demander le nombre d'utilisateurs (obligatoire)
 echo "📊 Configuration du test de charge"
 echo "===================================="
 echo ""
-read -p "Nombre d'utilisateurs pour le TEST 1 (faible charge, défaut: 5000): " USER_COUNT_1
-USER_COUNT_1=${USER_COUNT_1:-5000}
 
-read -p "Nombre d'utilisateurs pour le TEST 2 (charge moyenne, défaut: 20000): " USER_COUNT_2
-USER_COUNT_2=${USER_COUNT_2:-20000}
+USER_COUNT=""
+while [ -z "$USER_COUNT" ]; do
+  read -p "Nombre d'utilisateurs à tester: " USER_COUNT
+  if [ -z "$USER_COUNT" ]; then
+    echo "⚠️  Le nombre d'utilisateurs est obligatoire !"
+  elif ! [[ "$USER_COUNT" =~ ^[0-9]+$ ]]; then
+    echo "⚠️  Veuillez entrer un nombre valide !"
+    USER_COUNT=""
+  fi
+done
 
-read -p "Nombre d'utilisateurs pour le TEST 3 (Black Friday, défaut: 50000): " USER_COUNT_3
-USER_COUNT_3=${USER_COUNT_3:-50000}
-
-echo ""
-echo "✅ Configuration:"
-echo "   Test 1: $USER_COUNT_1 utilisateurs"
-echo "   Test 2: $USER_COUNT_2 utilisateurs"
-echo "   Test 3: $USER_COUNT_3 utilisateurs (Black Friday)"
-echo ""
-
-# Fonction pour vérifier les pods
-check_pods() {
-  echo "📊 État des pods:"
-  kubectl get pods -n $NAMESPACE
-  echo ""
-}
-
-# Fonction pour vérifier les métriques
-check_metrics() {
-  echo "📈 Métriques des pods:"
-  kubectl top pods -n $NAMESPACE 2>/dev/null || echo "Metrics server pas encore prêt"
-  echo ""
-  echo "📈 Métriques des nodes:"
-  kubectl top nodes 2>/dev/null || echo "Metrics server pas encore prêt"
-  echo ""
-}
-
-# Fonction pour vérifier HPA
-check_hpa() {
-  echo "🔄 État des HPA:"
-  kubectl get hpa -n $NAMESPACE
-  echo ""
-}
-
-# Installation de Locust si nécessaire
-if ! command -v locust &> /dev/null; then
-  echo "📦 Installation de Locust pour les tests de charge..."
-  pip3 install locust
+# Calculer le spawn-rate (environ 1% du nombre d'utilisateurs)
+SPAWN_RATE=$((USER_COUNT / 100))
+if [ $SPAWN_RATE -lt 10 ]; then
+  SPAWN_RATE=10
 fi
+
+# Demander la durée du test
+read -p "Durée du test en minutes (défaut: 10): " DURATION
+DURATION=${DURATION:-10}
+
+echo ""
+echo "✅ Configuration du test:"
+echo "   • Utilisateurs: $USER_COUNT"
+echo "   • Spawn rate: $SPAWN_RATE utilisateurs/seconde"
+echo "   • Durée: $DURATION minutes"
+echo "   • URL: http://$FRONTEND_URL"
+echo ""
+
+# Vérifier que Docker est disponible
+if ! command -v docker &> /dev/null; then
+  echo "❌ Erreur: Docker n'est pas installé ou n'est pas démarré"
+  echo "💡 Installez Docker Desktop: https://www.docker.com/products/docker-desktop"
+  exit 1
+fi
+
+echo "⏳ Préparation du test..."
+echo "📦 Utilisation de Locust via Docker..."
+echo ""
+
+# Afficher l'état initial
+echo "📊 État AVANT le test:"
+echo "======================"
+echo ""
+
+echo "🖥️  Nodes:"
+kubectl get nodes
+echo ""
+
+echo "📦 Pods dans $NAMESPACE:"
+kubectl get pods -n $NAMESPACE
+echo ""
+
+echo "🔄 HPA (Horizontal Pod Autoscalers):"
+kubectl get hpa -n $NAMESPACE 2>/dev/null || echo "Aucun HPA configuré"
+echo ""
+
+echo "📊 Métriques actuelles:"
+kubectl top nodes 2>/dev/null || echo "⚠️  Metrics server pas encore prêt"
+echo ""
+
+read -p "Appuyez sur ENTRÉE pour démarrer le test de charge..."
+echo ""
 
 # Créer le fichier Locust
 cat > /tmp/locustfile.py << 'EOF'
@@ -123,84 +142,145 @@ class OnlineBoutiqueUser(HttpUser):
         })
 EOF
 
-echo "🧪 TEST 1/3 - Charge FAIBLE ($USER_COUNT_1 utilisateurs)"
-echo "================================================"
-check_pods
-check_metrics
-check_hpa
+echo "🚀 DÉMARRAGE DU TEST DE CHARGE"
+echo "==============================="
+echo ""
+echo "⏳ Le test va durer $DURATION minutes avec $USER_COUNT utilisateurs virtuels..."
+echo ""
 
-echo "🚀 Démarrage du test avec ${USER_COUNT_1} utilisateurs virtuels..."
-locust -f /tmp/locustfile.py \
+# Lancer Locust via Docker en arrière-plan et capturer le PID
+docker run -d \
+  --name locust-load-test-$$ \
+  -v /tmp/locustfile.py:/mnt/locust/locustfile.py \
+  locustio/locust \
+  -f /mnt/locust/locustfile.py \
   --host=http://$FRONTEND_URL \
-  --users $USER_COUNT_1 \
-  --spawn-rate $(($USER_COUNT_1 / 50)) \
-  --run-time 5m \
+  --users $USER_COUNT \
+  --spawn-rate $SPAWN_RATE \
+  --run-time ${DURATION}m \
   --headless \
-  --only-summary
+  --only-summary > /tmp/locust_container_id.txt
 
+CONTAINER_ID=$(cat /tmp/locust_container_id.txt)
+
+echo "📊 Test en cours (Container ID: ${CONTAINER_ID:0:12})..."
+echo "⚠️  Pour arrêter le test à tout moment, exécutez:"
+echo "   docker stop ${CONTAINER_ID:0:12}"
 echo ""
-echo "⏸️  Pause de 2 minutes pour stabilisation..."
-sleep 120
-
-check_pods
-check_metrics
-check_hpa
-
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
-echo "🧪 TEST 2/3 - Charge MOYENNE ($USER_COUNT_2 utilisateurs)"
-echo "==================================================="
 
-echo "🚀 Démarrage du test avec ${USER_COUNT_2} utilisateurs virtuels..."
-locust -f /tmp/locustfile.py \
-  --host=http://$FRONTEND_URL \
-  --users $USER_COUNT_2 \
-  --spawn-rate $(($USER_COUNT_2 / 100)) \
-  --run-time 10m \
-  --headless \
-  --only-summary
+# Fonction pour surveiller l'état pendant le test
+monitor_during_test() {
+  while docker ps --filter id=$CONTAINER_ID --format '{{.ID}}' | grep -q .; do
+    clear
+    echo "🔴 TEST DE CHARGE EN COURS"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "⚙️  Configuration: $USER_COUNT users | Durée: ${DURATION}m | Container: ${CONTAINER_ID:0:12}"
+    echo ""
+    echo "⚠️  Pour arrêter: docker stop ${CONTAINER_ID:0:12}"
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
 
+    echo "🖥️  NODES:"
+    kubectl get nodes --no-headers | awk '{printf "   %-30s %s\n", $1, $2}'
+    echo ""
+
+    echo "📦 PODS ($NAMESPACE):"
+    kubectl get pods -n $NAMESPACE --no-headers | wc -l | xargs echo "   Total:"
+    kubectl get pods -n $NAMESPACE --no-headers | grep "Running" | wc -l | xargs echo "   Running:"
+    kubectl get pods -n $NAMESPACE --no-headers | grep -v "Running" | wc -l | xargs echo "   Problèmes:"
+    echo ""
+
+    echo "🔄 HPA (Horizontal Pod Autoscalers):"
+    kubectl get hpa -n $NAMESPACE --no-headers 2>/dev/null | awk '{printf "   %-30s %s/%s\n", $1, $2, $3}' || echo "   Aucun HPA"
+    echo ""
+
+    echo "📊 MÉTRIQUES NODES:"
+    kubectl top nodes --no-headers 2>/dev/null | awk '{printf "   %-30s CPU: %-10s RAM: %s\n", $1, $2, $3}' || echo "   Metrics server pas prêt"
+    echo ""
+
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "   Rafraîchissement dans 10 secondes..."
+
+    sleep 10
+  done
+}
+
+# Lancer le monitoring en arrière-plan
+monitor_during_test &
+MONITOR_PID=$!
+
+# Attendre la fin du conteneur Docker
+docker wait $CONTAINER_ID > /dev/null
+LOCUST_EXIT_CODE=$?
+
+# Récupérer les logs finaux de Locust
 echo ""
-echo "⏸️  Pause de 3 minutes pour stabilisation..."
-sleep 180
+echo "📊 Résultats du test Locust:"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+docker logs $CONTAINER_ID 2>&1 | tail -20
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-check_pods
-check_metrics
-check_hpa
+# Nettoyer le conteneur
+docker rm $CONTAINER_ID > /dev/null 2>&1
 
+# Arrêter le monitoring
+kill $MONITOR_PID 2>/dev/null
+
+clear
 echo ""
-echo "🧪 TEST 3/3 - Charge ÉLEVÉE Black Friday ($USER_COUNT_3 utilisateurs)"
-echo "==============================================================="
-
-echo "🚀 Démarrage du test avec ${USER_COUNT_3} utilisateurs virtuels..."
-locust -f /tmp/locustfile.py \
-  --host=http://$FRONTEND_URL \
-  --users $USER_COUNT_3 \
-  --spawn-rate $(($USER_COUNT_3 / 100)) \
-  --run-time 15m \
-  --headless \
-  --only-summary
-
-echo ""
-echo "⏸️  Pause de 5 minutes pour observation..."
-sleep 300
-
-check_pods
-check_metrics
-check_hpa
-
-echo ""
-echo "✅ Tests de charge terminés!"
-echo ""
-echo "📊 Résumé final:"
+echo "✅ TEST TERMINÉ"
 echo "==============="
-kubectl get hpa -n $NAMESPACE
 echo ""
-kubectl get pods -n $NAMESPACE -o wide
+
+# Afficher les résultats finaux
+echo "📊 État APRÈS le test:"
+echo "======================"
 echo ""
-kubectl top nodes
+
+echo "🖥️  Nodes:"
+kubectl get nodes
 echo ""
-echo "🎯 Vérifier les dashboards:"
-echo "  - Grafana: kubectl get svc -n monitoring kube-prometheus-stack-grafana"
-echo "  - Jaeger: kubectl get svc -n observability jaeger-query"
-echo "  - CloudWatch: Console AWS -> CloudWatch -> Dashboards -> eks-bfs-gp12-monitoring"
+
+echo "📦 Pods dans $NAMESPACE:"
+kubectl get pods -n $NAMESPACE
+echo ""
+
+echo "🔄 HPA (Horizontal Pod Autoscalers):"
+kubectl get hpa -n $NAMESPACE 2>/dev/null || echo "Aucun HPA configuré"
+echo ""
+
+echo "📊 Métriques finales:"
+kubectl top nodes 2>/dev/null || echo "⚠️  Metrics server pas disponible"
+echo ""
+
+echo "📈 Métriques des pods:"
+kubectl top pods -n $NAMESPACE 2>/dev/null || echo "⚠️  Metrics server pas disponible"
+echo ""
+
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+echo "🎯 RÉSUMÉ DU TEST:"
+echo "   • Utilisateurs: $USER_COUNT"
+echo "   • Durée: $DURATION minutes"
+echo "   • URL testée: http://$FRONTEND_URL"
+echo "   • Code de sortie: $LOCUST_EXIT_CODE"
+echo ""
+echo "💡 Commandes utiles:"
+echo "   • Voir les logs d'un pod:"
+echo "     kubectl logs -n $NAMESPACE <pod-name>"
+echo ""
+echo "   • Voir les événements:"
+echo "     kubectl get events -n $NAMESPACE --sort-by='.lastTimestamp'"
+echo ""
+echo "   • Voir les HPA en temps réel:"
+echo "     watch kubectl get hpa -n $NAMESPACE"
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+echo "✅ Script terminé."
+
 

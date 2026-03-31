@@ -173,11 +173,84 @@ EOF
     echo ""
     echo -e "${GREEN}✅ Test lancé: $DEPLOYMENT_NAME${NC}"
     echo ""
-    echo -e "${CYAN}Commandes utiles:${NC}"
-    echo "  Surveiller: watch kubectl get pods -n $NAMESPACE -l app=$DEPLOYMENT_NAME"
-    echo "  Arrêter: kubectl scale deployment $DEPLOYMENT_NAME -n $NAMESPACE --replicas=0"
+    echo "Attente du démarrage des pods (10 secondes)..."
+    sleep 10
+
+    # Afficher les instructions
+    clear
+    echo -e "${CYAN}${BOLD}╔═══════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}${BOLD}║         SURVEILLANCE DU TEST EN TEMPS RÉEL                ║${NC}"
+    echo -e "${CYAN}${BOLD}╚═══════════════════════════════════════════════════════════╝${NC}"
     echo ""
-    read -p "Appuyez sur ENTRÉE pour continuer..."
+    echo -e "${YELLOW}Test: $DEPLOYMENT_NAME${NC}"
+    echo -e "${YELLOW}Utilisateurs: $USER_COUNT ($REPLICAS pods)${NC}"
+    echo ""
+    echo -e "${GREEN}Appuyez sur Ctrl+C pour arrêter la surveillance${NC}"
+    echo -e "${CYAN}(Le test continuera en arrière-plan)${NC}"
+    echo ""
+    sleep 3
+
+    # Trap pour sortir proprement
+    trap 'echo ""; echo ""; echo -e "${YELLOW}Surveillance arrêtée. Test en cours...${NC}"; echo ""; sleep 2; return' INT
+
+    # Monitoring en temps réel
+    while true; do
+        clear
+        echo -e "${CYAN}${BOLD}╔═══════════════════════════════════════════════════════════╗${NC}"
+        echo -e "${CYAN}${BOLD}║         SURVEILLANCE DU TEST - $(date '+%H:%M:%S')                ║${NC}"
+        echo -e "${CYAN}${BOLD}╚═══════════════════════════════════════════════════════════╝${NC}"
+        echo ""
+        echo -e "${YELLOW}Test: $DEPLOYMENT_NAME | Users: $USER_COUNT${NC}"
+        echo ""
+
+        # Loadgenerators
+        echo -e "${BLUE}━━━ LOADGENERATORS ━━━${NC}"
+        LOADGEN_RUNNING=$(kubectl get pods -n $NAMESPACE -l app=$DEPLOYMENT_NAME --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l | tr -d ' ')
+        LOADGEN_TOTAL=$(kubectl get pods -n $NAMESPACE -l app=$DEPLOYMENT_NAME --no-headers 2>/dev/null | wc -l | tr -d ' ')
+        USERS_SIMULATED=$((LOADGEN_RUNNING * 100))
+
+        if [ "$LOADGEN_RUNNING" -eq "$LOADGEN_TOTAL" ] && [ "$LOADGEN_TOTAL" -gt 0 ]; then
+            echo -e "${GREEN}✅ Loadgenerators: $LOADGEN_RUNNING/$LOADGEN_TOTAL Running${NC}"
+            echo -e "${GREEN}✅ Utilisateurs simulés: $USERS_SIMULATED/$USER_COUNT${NC}"
+        else
+            echo -e "${YELLOW}⏳ Loadgenerators: $LOADGEN_RUNNING/$LOADGEN_TOTAL Running${NC}"
+            echo -e "${YELLOW}⏳ Utilisateurs simulés: $USERS_SIMULATED/$USER_COUNT (démarrage...)${NC}"
+        fi
+        echo ""
+
+        # HPAs
+        echo -e "${BLUE}━━━ AUTO-SCALING (HPAs) ━━━${NC}"
+        kubectl get hpa -n $NAMESPACE 2>/dev/null | head -6 || echo "  Pas de HPA configuré"
+        echo ""
+
+        # Pods count
+        echo -e "${BLUE}━━━ PODS PAR SERVICE ━━━${NC}"
+        printf "  %-25s : %s\n" "Frontend" "$(kubectl get pods -n $NAMESPACE -l app=frontend --no-headers 2>/dev/null | wc -l | tr -d ' ')"
+        printf "  %-25s : %s\n" "Product Catalog" "$(kubectl get pods -n $NAMESPACE -l app=productcatalogservice --no-headers 2>/dev/null | wc -l | tr -d ' ')"
+        printf "  %-25s : %s\n" "Checkout" "$(kubectl get pods -n $NAMESPACE -l app=checkoutservice --no-headers 2>/dev/null | wc -l | tr -d ' ')"
+        printf "  %-25s : %s\n" "Cart" "$(kubectl get pods -n $NAMESPACE -l app=cartservice --no-headers 2>/dev/null | wc -l | tr -d ' ')"
+        echo ""
+
+        # Nodes
+        echo -e "${BLUE}━━━ NODES ━━━${NC}"
+        NODE_COUNT=$(kubectl get nodes --no-headers 2>/dev/null | wc -l | tr -d ' ')
+        echo "  Nodes actifs: $NODE_COUNT"
+        echo ""
+
+        # Top Pods CPU
+        echo -e "${BLUE}━━━ TOP 5 PODS (CPU) ━━━${NC}"
+        kubectl top pods -n $NAMESPACE --no-headers 2>/dev/null | sort -k2 -hr | head -5 | awk '{printf "  %-40s %s\n", $1, $2}' || echo "  Metrics Server non disponible"
+        echo ""
+
+        echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "${GREEN}Ctrl+C pour arrêter | Commande d'arrêt: kubectl scale deployment $DEPLOYMENT_NAME -n $NAMESPACE --replicas=0${NC}"
+        echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+
+        sleep 5
+    done
+
+    # Restaurer le trap
+    trap - INT
 }
 
 # Fonction 4 : Arrêter un test

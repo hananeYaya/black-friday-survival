@@ -1,31 +1,9 @@
-# VPC Module (conditional creation)
-module "vpc" {
-  count   = var.create_vpc ? 1 : 0
-  source  = "terraform-aws-modules/vpc/aws"
-  version = "~> 5.0"
+locals {
+  name   = var.cluster_name
+  region = var.aws_region
 
-  name = "${var.cluster_name}-vpc"
-  cidr = var.vpc_cidr
-
-  azs             = var.availability_zones
-  private_subnets = var.private_subnet_cidrs
-  public_subnets  = var.public_subnet_cidrs
-
-  enable_nat_gateway   = true
-  single_nat_gateway   = false # 3 NAT Gateways pour haute disponibilité
-  enable_dns_hostnames = true
-  enable_dns_support   = true
-
-  # Tags required for EKS
-  public_subnet_tags = {
-    "kubernetes.io/role/elb"                    = "1"
-    "kubernetes.io/cluster/${var.cluster_name}" = "shared"
-  }
-
-  private_subnet_tags = {
-    "kubernetes.io/role/internal-elb"           = "1"
-    "kubernetes.io/cluster/${var.cluster_name}" = "shared"
-  }
+  vpc_cidr = var.vpc_cidr
+  azs      = slice(data.aws_availability_zones.available.names, 0, 3)
 
   tags = {
     Project     = var.project_name
@@ -34,95 +12,67 @@ module "vpc" {
   }
 }
 
-# EKS Cluster Module
-module "eks" {
-  source  = "terraform-aws-modules/eks/aws"
-  version = "~> 20.31"
+data "aws_availability_zones" "available" {
+  filter {
+    name   = "opt-in-status"
+    values = ["opt-in-not-required"]
+  }
+}
 
-  cluster_name    = var.cluster_name
-  cluster_version = var.kubernetes_version
+################################################################################
+# VPC
+################################################################################
 
-  # Use created VPC or existing one
-  vpc_id     = var.create_vpc ? module.vpc[0].vpc_id : var.vpc_id
-  subnet_ids = var.create_vpc ? module.vpc[0].private_subnets : var.subnet_ids
+module "vpc" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "~> 5.0"
 
-  # Enable IRSA for pod-level IAM roles
-  enable_irsa = true
+  name = "${local.name}-vpc"
+  cidr = local.vpc_cidr
 
-  # Cluster endpoint configuration
-  cluster_endpoint_public_access  = true
-  cluster_endpoint_private_access = true
+  azs             = local.azs
+  private_subnets = [for k, v in local.azs : cidrsubnet(local.vpc_cidr, 4, k)]
+  public_subnets  = [for k, v in local.azs : cidrsubnet(local.vpc_cidr, 8, k + 48)]
 
-  # CloudWatch Logging
-  cluster_enabled_log_types              = ["api", "audit", "authenticator", "controllerManager", "scheduler"]
-  cloudwatch_log_group_retention_in_days = var.log_retention_days
+  enable_nat_gateway   = true
+  single_nat_gateway   = true  # 1 seul NAT gateway pour économiser les coûts et éviter les limites EIP
+  enable_dns_hostnames = true
 
-  # EKS Managed Node Groups
-  eks_managed_node_groups = {
-    # General purpose node group
-    general = {
-      name           = "general-${var.project_name}"
-      instance_types = ["t3.medium"]
-
-      min_size     = 3
-      max_size     = 20
-      desired_size = 5
-
-      labels = {
-        role = "general"
-      }
-
-      tags = {
-        NodeGroup = "general"
-      }
-    }
-
-    # High-performance node group for peak loads (Black Friday)
-    high_performance = {
-      name           = "high-perf-${var.project_name}"
-      instance_types = ["c5.xlarge"]
-
-      min_size     = 0
-      max_size     = 30
-      desired_size = 2
-
-      labels = {
-        role         = "high-performance"
-        black_friday = "enabled"
-      }
-
-      taints = [{
-        key    = "high-performance"
-        value  = "true"
-        effect = "NO_SCHEDULE"
-      }]
-
-      tags = {
-        NodeGroup = "high-performance"
-      }
-    }
-
-    # Spot instances for cost optimization
-    spot = {
-      name           = "spot-${var.project_name}"
-      instance_types = ["t3.large", "t3.medium"]  # t3a non disponible en eu-south-2
-      capacity_type  = "SPOT"
-
-      min_size     = 0
-      max_size     = 15
-      desired_size = 3
-
-      labels = {
-        role = "spot"
-      }
-
-      tags = {
-        NodeGroup = "spot"
-      }
-    }
+  public_subnet_tags = {
+    "kubernetes.io/role/elb" = 1
+    "kubernetes.io/cluster/${local.name}" = "shared"
   }
 
-  # EKS Addons
+  private_subnet_tags = {
+    "kubernetes.io/role/internal-elb" = 1
+    "kubernetes.io/cluster/${local.name}" = "shared"
+  }
+
+  tags = local.tags
+}
+
+################################################################################
+# EKS Cluster
+################################################################################
+
+module "eks" {
+  source  = "terraform-aws-modules/eks/aws"
+  version = "~> 20.0"
+
+  cluster_name    = local.name
+  cluster_version = var.cluster_version
+
+  cluster_endpoint_public_access = true
+
+  # Chiffrement des secrets avec KMS
+  cluster_encryption_config = {
+    resources        = ["secrets"]
+    provider_key_arn = aws_kms_key.eks.arn
+  }
+
+  # Enable CloudWatch logging
+  cluster_enabled_log_types = ["api", "audit", "authenticator", "controllerManager", "scheduler"]
+
   cluster_addons = {
     coredns = {
       most_recent = true
@@ -139,69 +89,89 @@ module "eks" {
     }
   }
 
+  vpc_id                   = module.vpc.vpc_id
+  subnet_ids               = module.vpc.private_subnets
+  control_plane_subnet_ids = module.vpc.public_subnets
+
+  # Security groups additionnels
+  cluster_additional_security_group_ids = [aws_security_group.eks_additional.id]
+
+  # EKS Managed Node Group(s)
+  eks_managed_node_group_defaults = {
+    instance_types = ["t3.medium"]
+
+    iam_role_additional_policies = {
+      AmazonEBSCSIDriverPolicy = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
+    }
+  }
+
+  eks_managed_node_groups = {
+    # Node group principal
+    general = {
+      min_size     = 2
+      max_size     = 10
+      desired_size = 2  # Réduit de 3 à 2 pour économie
+
+      instance_types = ["t3.medium"]
+      capacity_type  = "ON_DEMAND"
+
+      labels = {
+        workload = "general"
+      }
+    }
+
+    # Node group pour charges intensives (Black Friday)
+    high_memory = {
+      min_size     = 0
+      max_size     = 5
+      desired_size = 0
+
+      instance_types = ["t3.large"]
+      capacity_type  = "ON_DEMAND"
+
+      labels = {
+        workload = "high-memory"
+      }
+
+      taints = [{
+        key    = "high-memory"
+        value  = "true"
+        effect = "NO_SCHEDULE"
+      }]
+    }
+
+    # Node group Spot pour économiser
+    spot = {
+      min_size     = 0
+      max_size     = 5
+      desired_size = 0  # Désactivé au démarrage, activé par autoscaler si besoin
+
+      instance_types = ["t3.medium", "t3a.medium"]
+      capacity_type  = "SPOT"
+
+      labels = {
+        workload = "spot"
+      }
+    }
+  }
+
   # Cluster access entry
   enable_cluster_creator_admin_permissions = true
 
-  tags = {
-    Project     = "BlackFridaySurvival"
-    Environment = var.environment
-    ManagedBy   = "Terraform"
-  }
+  tags = local.tags
 }
 
-# IAM role for EBS CSI driver
-module "ebs_csi_irsa_role" {
-  source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
-  version = "~> 5.30"
+# Note: CloudWatch Log Group créé automatiquement par le module EKS
 
-  role_name = "${var.cluster_name}-ebs-csi"
+################################################################################
+# IAM Role for AWS Load Balancer Controller
+################################################################################
 
-  attach_ebs_csi_policy = true
-
-  oidc_providers = {
-    ex = {
-      provider_arn               = module.eks.oidc_provider_arn
-      namespace_service_accounts = ["kube-system:ebs-csi-controller-sa"]
-    }
-  }
-
-  tags = {
-    Project     = "BlackFridaySurvival"
-    Environment = var.environment
-    ManagedBy   = "Terraform"
-  }
-}
-
-# IAM role for Cluster Autoscaler
-module "cluster_autoscaler_irsa_role" {
-  source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
-  version = "~> 5.30"
-
-  role_name = "${var.cluster_name}-cluster-autoscaler"
-
-  attach_cluster_autoscaler_policy = true
-  cluster_autoscaler_cluster_names = [module.eks.cluster_name]
-
-  oidc_providers = {
-    ex = {
-      provider_arn               = module.eks.oidc_provider_arn
-      namespace_service_accounts = ["kube-system:cluster-autoscaler"]
-    }
-  }
-
-  tags = {
-    Project     = "BlackFridaySurvival"
-    Environment = var.environment
-    ManagedBy   = "Terraform"
-  }
-}
-
-# IAM role for AWS Load Balancer Controller
 module "aws_load_balancer_controller_irsa_role" {
   source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
-  version = "~> 5.30"
+  version = "~> 5.0"
 
-  role_name = "${var.cluster_name}-aws-load-balancer-controller"
+  role_name = "${local.name}-aws-load-balancer-controller"
 
   attach_load_balancer_controller_policy = true
 
@@ -212,9 +182,51 @@ module "aws_load_balancer_controller_irsa_role" {
     }
   }
 
-  tags = {
-    Project     = var.project_name
-    Environment = var.environment
-    ManagedBy   = "Terraform"
-  }
+  tags = local.tags
 }
+
+################################################################################
+# IAM Role for Cluster Autoscaler
+################################################################################
+
+module "cluster_autoscaler_irsa_role" {
+  source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
+  version = "~> 5.0"
+
+  role_name = "${local.name}-cluster-autoscaler"
+
+  attach_cluster_autoscaler_policy = true
+  cluster_autoscaler_cluster_ids   = [module.eks.cluster_name]
+
+  oidc_providers = {
+    ex = {
+      provider_arn               = module.eks.oidc_provider_arn
+      namespace_service_accounts = ["kube-system:cluster-autoscaler"]
+    }
+  }
+
+  tags = local.tags
+}
+
+################################################################################
+# IAM Role for EBS CSI Driver
+################################################################################
+
+module "ebs_csi_irsa_role" {
+  source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
+  version = "~> 5.0"
+
+  role_name = "${local.name}-ebs-csi"
+
+  attach_ebs_csi_policy = true
+
+  oidc_providers = {
+    ex = {
+      provider_arn               = module.eks.oidc_provider_arn
+      namespace_service_accounts = ["kube-system:ebs-csi-controller-sa"]
+    }
+  }
+
+  tags = local.tags
+}
+

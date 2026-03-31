@@ -1,286 +1,336 @@
 #!/bin/bash
 set -e
 
-echo "🧪 Test de charge pour Black Friday Survival"
-echo "============================================="
+# Script de test de charge pour Black Friday Survival
+# Utilise des loadgenerators Kubernetes pour simuler N utilisateurs
+
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+clear
+
+echo -e "${GREEN}${BOLD}╔═══════════════════════════════════════════════════════════╗${NC}"
+echo -e "${GREEN}${BOLD}║      TEST DE CHARGE - BLACK FRIDAY SURVIVAL               ║${NC}"
+echo -e "${GREEN}${BOLD}╚═══════════════════════════════════════════════════════════╝${NC}"
 echo ""
 
-# Variables
 NAMESPACE="online-boutique"
-FRONTEND_URL=$(kubectl get svc frontend-external -n $NAMESPACE -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "")
 
-if [ -z "$FRONTEND_URL" ]; then
-  echo "❌ Erreur: Le service frontend-external n'a pas de Load Balancer"
-  echo "💡 Conseil: Exécutez d'abord:"
-  echo "   kubectl patch svc frontend-external -n $NAMESPACE -p '{\"spec\":{\"type\":\"LoadBalancer\"}}'"
+# Vérifier que le namespace existe
+if ! kubectl get namespace $NAMESPACE &>/dev/null; then
+  echo -e "${RED}❌ Le namespace $NAMESPACE n'existe pas${NC}"
+  echo "💡 Déployez d'abord l'application avec: ./deploy-online-boutique.sh"
   exit 1
 fi
 
-echo "🌐 URL Frontend: http://$FRONTEND_URL"
+# ═══════════════════════════════════════════════════════════
+# ÉTAPE 1 : CONFIGURATION
+# ═══════════════════════════════════════════════════════════
+
+echo -e "${YELLOW}${BOLD}[ÉTAPE 1/4] Configuration du test${NC}"
 echo ""
 
 # Demander le nombre d'utilisateurs (obligatoire)
-echo "📊 Configuration du test de charge"
-echo "===================================="
-echo ""
-
 USER_COUNT=""
 while [ -z "$USER_COUNT" ]; do
   read -p "Nombre d'utilisateurs à tester: " USER_COUNT
   if [ -z "$USER_COUNT" ]; then
-    echo "⚠️  Le nombre d'utilisateurs est obligatoire !"
+    echo -e "${RED}⚠️  Le nombre d'utilisateurs est obligatoire !${NC}"
   elif ! [[ "$USER_COUNT" =~ ^[0-9]+$ ]]; then
-    echo "⚠️  Veuillez entrer un nombre valide !"
+    echo -e "${RED}⚠️  Veuillez entrer un nombre valide !${NC}"
     USER_COUNT=""
   fi
 done
 
-# Calculer le spawn-rate (environ 1% du nombre d'utilisateurs)
-SPAWN_RATE=$((USER_COUNT / 100))
-if [ $SPAWN_RATE -lt 10 ]; then
-  SPAWN_RATE=10
+# Calculer le nombre de loadgenerators (1 loadgenerator = 100 users)
+REPLICAS=$((USER_COUNT / 100))
+if [ $REPLICAS -lt 1 ]; then
+  REPLICAS=1
 fi
 
-# Demander la durée du test
-read -p "Durée du test en minutes (défaut: 10): " DURATION
-DURATION=${DURATION:-10}
-
 echo ""
-echo "✅ Configuration du test:"
-echo "   • Utilisateurs: $USER_COUNT"
-echo "   • Spawn rate: $SPAWN_RATE utilisateurs/seconde"
-echo "   • Durée: $DURATION minutes"
-echo "   • URL: http://$FRONTEND_URL"
+echo -e "${GREEN}✅ Configuration: $USER_COUNT utilisateurs ($REPLICAS loadgenerators)${NC}"
 echo ""
 
-# Vérifier que Docker est disponible
-if ! command -v docker &> /dev/null; then
-  echo "❌ Erreur: Docker n'est pas installé ou n'est pas démarré"
-  echo "💡 Installez Docker Desktop: https://www.docker.com/products/docker-desktop"
-  exit 1
+# Nom du déploiement
+DEPLOYMENT_NAME="loadgenerator-test-$$"
+YAML_FILE="/tmp/loadgenerator-test-$$.yaml"
+
+# Confirmation
+echo -e "${YELLOW}⚠️  ATTENTION${NC}"
+echo "Ce test va créer $REPLICAS pods qui vont générer $USER_COUNT requêtes simultanées."
+echo "Le Cluster Autoscaler et les HPAs vont automatiquement adapter les ressources."
+echo ""
+read -p "Voulez-vous continuer ? (o/n): " confirm
+
+if [[ ! $confirm =~ ^[Oo]$ ]]; then
+  echo -e "${RED}Test annulé.${NC}"
+  exit 0
 fi
 
-echo "⏳ Préparation du test..."
-echo "📦 Utilisation de Locust via Docker..."
 echo ""
 
-# Afficher l'état initial
-echo "📊 État AVANT le test:"
-echo "======================"
+# ═══════════════════════════════════════════════════════════
+# ÉTAPE 2 : ÉTAT INITIAL
+# ═══════════════════════════════════════════════════════════
+
+echo -e "${YELLOW}${BOLD}[ÉTAPE 2/4] État initial du cluster${NC}"
 echo ""
 
-echo "🖥️  Nodes:"
-kubectl get nodes
+echo -e "${CYAN}État actuel:${NC}"
+CURRENT_NODES=$(kubectl get nodes --no-headers 2>/dev/null | wc -l | tr -d ' ')
+CURRENT_PODS=$(kubectl get pods -n $NAMESPACE --no-headers 2>/dev/null | wc -l | tr -d ' ')
+echo "  - Nodes: $CURRENT_NODES"
+echo "  - Pods dans $NAMESPACE: $CURRENT_PODS"
 echo ""
 
-echo "📦 Pods dans $NAMESPACE:"
-kubectl get pods -n $NAMESPACE
+# Afficher les HPAs
+echo -e "${CYAN}HPAs (Horizontal Pod Autoscalers):${NC}"
+kubectl get hpa -n $NAMESPACE 2>/dev/null || echo "  Aucun HPA configuré"
 echo ""
 
-echo "🔄 HPA (Horizontal Pod Autoscalers):"
-kubectl get hpa -n $NAMESPACE 2>/dev/null || echo "Aucun HPA configuré"
+# Afficher les métriques
+echo -e "${CYAN}Métriques actuelles:${NC}"
+kubectl top nodes 2>/dev/null || echo "  ⚠️  Metrics server pas encore prêt"
 echo ""
 
-echo "📊 Métriques actuelles:"
-kubectl top nodes 2>/dev/null || echo "⚠️  Metrics server pas encore prêt"
+read -p "Appuyez sur ENTRÉE pour démarrer le test..."
 echo ""
 
-read -p "Appuyez sur ENTRÉE pour démarrer le test de charge..."
+# ═══════════════════════════════════════════════════════════
+# ÉTAPE 3 : CRÉATION DU DÉPLOIEMENT
+# ═══════════════════════════════════════════════════════════
+
+echo -e "${YELLOW}${BOLD}[ÉTAPE 3/4] Déploiement des loadgenerators${NC}"
 echo ""
 
-# Créer le fichier Locust
-cat > /tmp/locustfile.py << 'EOF'
-from locust import HttpUser, task, between
-import random
+echo -e "${CYAN}Création du fichier de configuration...${NC}"
 
-class OnlineBoutiqueUser(HttpUser):
-    wait_time = between(1, 3)
-
-    @task(10)
-    def view_homepage(self):
-        self.client.get("/")
-
-    @task(5)
-    def view_product(self):
-        product_ids = [
-            "0PUK6V6EV0", "1YMWWN1N4O", "2ZYFJ3GM2N", "66VCHSJNUP",
-            "6E92ZMYYFZ", "9SIQT8TOJO", "L9ECAV7KIM", "LS4PSXUNUM", "OLJCESPC7Z"
-        ]
-        product_id = random.choice(product_ids)
-        self.client.get(f"/product/{product_id}")
-
-    @task(3)
-    def add_to_cart(self):
-        product_ids = [
-            "0PUK6V6EV0", "1YMWWN1N4O", "2ZYFJ3GM2N", "66VCHSJNUP",
-            "6E92ZMYYFZ", "9SIQT8TOJO", "L9ECAV7KIM", "LS4PSXUNUM", "OLJCESPC7Z"
-        ]
-        product_id = random.choice(product_ids)
-        quantity = random.randint(1, 5)
-        self.client.post("/cart", {
-            "product_id": product_id,
-            "quantity": quantity
-        })
-
-    @task(1)
-    def view_cart(self):
-        self.client.get("/cart")
-
-    @task(1)
-    def checkout(self):
-        self.client.post("/cart/checkout", {
-            "email": "test@example.com",
-            "street_address": "1600 Amphitheatre Parkway",
-            "zip_code": "94043",
-            "city": "Mountain View",
-            "state": "CA",
-            "country": "United States",
-            "credit_card_number": "4432-8015-6152-0454",
-            "credit_card_expiration_month": "12",
-            "credit_card_expiration_year": "2030",
-            "credit_card_cvv": "123"
-        })
+cat > "$YAML_FILE" <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: $DEPLOYMENT_NAME
+  namespace: $NAMESPACE
+  labels:
+    app: $DEPLOYMENT_NAME
+spec:
+  replicas: $REPLICAS
+  selector:
+    matchLabels:
+      app: $DEPLOYMENT_NAME
+  template:
+    metadata:
+      labels:
+        app: $DEPLOYMENT_NAME
+    spec:
+      serviceAccountName: default
+      terminationGracePeriodSeconds: 5
+      restartPolicy: Always
+      containers:
+      - name: main
+        image: gcr.io/google-samples/microservices-demo/loadgenerator:v0.10.1
+        env:
+        - name: FRONTEND_ADDR
+          value: "frontend:80"
+        - name: USERS
+          value: "100"
+        resources:
+          requests:
+            cpu: 300m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
 EOF
 
-echo "🚀 DÉMARRAGE DU TEST DE CHARGE"
-echo "==============================="
-echo ""
-echo "⏳ Le test va durer $DURATION minutes avec $USER_COUNT utilisateurs virtuels..."
+echo -e "${GREEN}✅ Fichier créé${NC}"
 echo ""
 
-# Lancer Locust via Docker en arrière-plan et capturer le PID
-docker run -d \
-  --name locust-load-test-$$ \
-  -v /tmp/locustfile.py:/mnt/locust/locustfile.py \
-  locustio/locust \
-  -f /mnt/locust/locustfile.py \
-  --host=http://$FRONTEND_URL \
-  --users $USER_COUNT \
-  --spawn-rate $SPAWN_RATE \
-  --run-time ${DURATION}m \
-  --headless \
-  --only-summary > /tmp/locust_container_id.txt
+echo -e "${CYAN}Déploiement de $REPLICAS loadgenerators...${NC}"
+kubectl apply -f "$YAML_FILE"
 
-CONTAINER_ID=$(cat /tmp/locust_container_id.txt)
-
-echo "📊 Test en cours (Container ID: ${CONTAINER_ID:0:12})..."
-echo "⚠️  Pour arrêter le test à tout moment, exécutez:"
-echo "   docker stop ${CONTAINER_ID:0:12}"
 echo ""
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo -e "${GREEN}✅ Déploiement lancé${NC}"
 echo ""
 
-# Fonction pour surveiller l'état pendant le test
-monitor_during_test() {
-  while docker ps --filter id=$CONTAINER_ID --format '{{.ID}}' | grep -q .; do
-    clear
-    echo "🔴 TEST DE CHARGE EN COURS"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo ""
-    echo "⚙️  Configuration: $USER_COUNT users | Durée: ${DURATION}m | Container: ${CONTAINER_ID:0:12}"
-    echo ""
-    echo "⚠️  Pour arrêter: docker stop ${CONTAINER_ID:0:12}"
-    echo ""
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo ""
+echo "⏳ Attente du démarrage des pods (30 secondes)..."
+sleep 30
 
-    echo "🖥️  NODES:"
-    kubectl get nodes --no-headers | awk '{printf "   %-30s %s\n", $1, $2}'
+# Vérifier l'état
+LOADGEN_RUNNING=$(kubectl get pods -n $NAMESPACE -l app=$DEPLOYMENT_NAME --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l | tr -d ' ')
+LOADGEN_TOTAL=$(kubectl get pods -n $NAMESPACE -l app=$DEPLOYMENT_NAME --no-headers 2>/dev/null | wc -l | tr -d ' ')
+
+echo ""
+echo -e "${CYAN}État du déploiement:${NC}"
+echo "  - Loadgenerators Running: $LOADGEN_RUNNING/$LOADGEN_TOTAL"
+echo "  - Utilisateurs simulés: $((LOADGEN_RUNNING * 100))/$USER_COUNT"
+echo ""
+
+if [ "$LOADGEN_RUNNING" -lt "$LOADGEN_TOTAL" ]; then
+  echo -e "${YELLOW}⏳ Tous les pods ne sont pas encore démarrés.${NC}"
+  echo "   Ils vont continuer à démarrer en arrière-plan."
+  echo ""
+fi
+
+# ═══════════════════════════════════════════════════════════
+# ÉTAPE 4 : SURVEILLANCE EN TEMPS RÉEL
+# ═══════════════════════════════════════════════════════════
+
+echo -e "${YELLOW}${BOLD}[ÉTAPE 4/4] Surveillance en temps réel${NC}"
+echo ""
+
+echo -e "${CYAN}Le mode surveillance va s'afficher dans 3 secondes...${NC}"
+echo "Appuyez sur Ctrl+C pour arrêter la surveillance (le test continuera en arrière-plan)"
+sleep 3
+
+# Trap Ctrl+C pour sortir proprement
+trap ctrl_c INT
+function ctrl_c() {
     echo ""
-
-    echo "📦 PODS ($NAMESPACE):"
-    kubectl get pods -n $NAMESPACE --no-headers | wc -l | xargs echo "   Total:"
-    kubectl get pods -n $NAMESPACE --no-headers | grep "Running" | wc -l | xargs echo "   Running:"
-    kubectl get pods -n $NAMESPACE --no-headers | grep -v "Running" | wc -l | xargs echo "   Problèmes:"
     echo ""
-
-    echo "🔄 HPA (Horizontal Pod Autoscalers):"
-    kubectl get hpa -n $NAMESPACE --no-headers 2>/dev/null | awk '{printf "   %-30s %s/%s\n", $1, $2, $3}' || echo "   Aucun HPA"
+    echo -e "${YELLOW}╔═══════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${YELLOW}║         Surveillance arrêtée                              ║${NC}"
+    echo -e "${YELLOW}╚═══════════════════════════════════════════════════════════╝${NC}"
     echo ""
-
-    echo "📊 MÉTRIQUES NODES:"
-    kubectl top nodes --no-headers 2>/dev/null | awk '{printf "   %-30s CPU: %-10s RAM: %s\n", $1, $2, $3}' || echo "   Metrics server pas prêt"
-    echo ""
-
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "   Rafraîchissement dans 10 secondes..."
-
-    sleep 10
-  done
+    show_stop_commands
+    exit 0
 }
 
-# Lancer le monitoring en arrière-plan
-monitor_during_test &
-MONITOR_PID=$!
+# Fonction pour afficher les commandes d'arrêt
+show_stop_commands() {
+    echo -e "${GREEN}${BOLD}════════════════════════════════════════════════════════════${NC}"
+    echo -e "${GREEN}${BOLD}  TEST DE CHARGE EN COURS - $USER_COUNT UTILISATEURS${NC}"
+    echo -e "${GREEN}${BOLD}════════════════════════════════════════════════════════════${NC}"
+    echo ""
 
-# Attendre la fin du conteneur Docker
-docker wait $CONTAINER_ID > /dev/null
-LOCUST_EXIT_CODE=$?
+    echo -e "${CYAN}📊 INFORMATIONS DU TEST${NC}"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "Deployment      : $DEPLOYMENT_NAME"
+    echo "Namespace       : $NAMESPACE"
+    echo "Replicas        : $REPLICAS loadgenerators"
+    echo "Utilisateurs    : $USER_COUNT"
+    echo ""
 
-# Récupérer les logs finaux de Locust
-echo ""
-echo "📊 Résultats du test Locust:"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-docker logs $CONTAINER_ID 2>&1 | tail -20
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo -e "${YELLOW}📈 COMMANDES DE SURVEILLANCE${NC}"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "Surveiller les HPAs (auto-scaling):"
+    echo -e "  ${GREEN}watch kubectl get hpa -n $NAMESPACE${NC}"
+    echo ""
+    echo "Surveiller les nodes:"
+    echo -e "  ${GREEN}watch kubectl get nodes${NC}"
+    echo ""
+    echo "Voir les loadgenerators:"
+    echo -e "  ${GREEN}kubectl get pods -n $NAMESPACE -l app=$DEPLOYMENT_NAME${NC}"
+    echo ""
+    echo "Métriques CPU/RAM:"
+    echo -e "  ${GREEN}kubectl top pods -n $NAMESPACE${NC}"
+    echo -e "  ${GREEN}kubectl top nodes${NC}"
+    echo ""
 
-# Nettoyer le conteneur
-docker rm $CONTAINER_ID > /dev/null 2>&1
+    echo -e "${RED}🛑 COMMANDES POUR ARRÊTER LE TEST${NC}"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "Option 1 : Arrêt progressif (RECOMMANDÉ)"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-# Arrêter le monitoring
-kill $MONITOR_PID 2>/dev/null
+    if [ $REPLICAS -ge 50 ]; then
+        echo "  # Réduire à 50%"
+        echo -e "  ${RED}kubectl scale deployment $DEPLOYMENT_NAME -n $NAMESPACE --replicas=$((REPLICAS / 2))${NC}"
+        echo ""
+    fi
 
-clear
-echo ""
-echo "✅ TEST TERMINÉ"
-echo "==============="
-echo ""
+    if [ $REPLICAS -ge 20 ]; then
+        echo "  # Réduire à 1000 utilisateurs"
+        echo -e "  ${RED}kubectl scale deployment $DEPLOYMENT_NAME -n $NAMESPACE --replicas=10${NC}"
+        echo ""
+    fi
 
-# Afficher les résultats finaux
-echo "📊 État APRÈS le test:"
-echo "======================"
-echo ""
+    echo "  # Arrêt total"
+    echo -e "  ${RED}kubectl scale deployment $DEPLOYMENT_NAME -n $NAMESPACE --replicas=0${NC}"
+    echo ""
 
-echo "🖥️  Nodes:"
-kubectl get nodes
-echo ""
+    echo "Option 2 : Suppression complète"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo -e "  ${RED}kubectl delete deployment $DEPLOYMENT_NAME -n $NAMESPACE${NC}"
+    echo ""
 
-echo "📦 Pods dans $NAMESPACE:"
-kubectl get pods -n $NAMESPACE
-echo ""
+    echo -e "${CYAN}💡 CONSEIL${NC}"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "Laissez le test tourner 15-30 minutes pour observer le comportement"
+    echo "du cluster sous charge et l'auto-scaling en action."
+    echo ""
+}
 
-echo "🔄 HPA (Horizontal Pod Autoscalers):"
-kubectl get hpa -n $NAMESPACE 2>/dev/null || echo "Aucun HPA configuré"
-echo ""
+# Fonction de monitoring en temps réel
+monitor_test() {
+    while true; do
+        clear
+        echo -e "${CYAN}${BOLD}╔═══════════════════════════════════════════════════════════╗${NC}"
+        echo -e "${CYAN}${BOLD}║           SURVEILLANCE EN TEMPS RÉEL                      ║${NC}"
+        echo -e "${CYAN}${BOLD}╚═══════════════════════════════════════════════════════════╝${NC}"
+        echo ""
 
-echo "📊 Métriques finales:"
-kubectl top nodes 2>/dev/null || echo "⚠️  Metrics server pas disponible"
-echo ""
+        # Date et heure
+        echo -e "${YELLOW}📅 $(date '+%Y-%m-%d %H:%M:%S')${NC}"
+        echo ""
 
-echo "📈 Métriques des pods:"
-kubectl top pods -n $NAMESPACE 2>/dev/null || echo "⚠️  Metrics server pas disponible"
-echo ""
+        # Loadgenerators
+        echo -e "${BLUE}━━━ LOADGENERATORS (Charge simulée) ━━━${NC}"
+        LOADGEN_RUNNING=$(kubectl get pods -n $NAMESPACE -l app=$DEPLOYMENT_NAME --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l | tr -d ' ')
+        LOADGEN_TOTAL=$(kubectl get pods -n $NAMESPACE -l app=$DEPLOYMENT_NAME --no-headers 2>/dev/null | wc -l | tr -d ' ')
+        USERS_SIMULATED=$((LOADGEN_RUNNING * 100))
 
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo ""
-echo "🎯 RÉSUMÉ DU TEST:"
-echo "   • Utilisateurs: $USER_COUNT"
-echo "   • Durée: $DURATION minutes"
-echo "   • URL testée: http://$FRONTEND_URL"
-echo "   • Code de sortie: $LOCUST_EXIT_CODE"
-echo ""
-echo "💡 Commandes utiles:"
-echo "   • Voir les logs d'un pod:"
-echo "     kubectl logs -n $NAMESPACE <pod-name>"
-echo ""
-echo "   • Voir les événements:"
-echo "     kubectl get events -n $NAMESPACE --sort-by='.lastTimestamp'"
-echo ""
-echo "   • Voir les HPA en temps réel:"
-echo "     watch kubectl get hpa -n $NAMESPACE"
-echo ""
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo ""
-echo "✅ Script terminé."
+        if [ "$LOADGEN_RUNNING" -eq "$LOADGEN_TOTAL" ]; then
+            echo -e "${GREEN}✅ Loadgenerators: $LOADGEN_RUNNING/$LOADGEN_TOTAL Running${NC}"
+            echo -e "${GREEN}✅ Utilisateurs simulés: $USERS_SIMULATED/$USER_COUNT${NC}"
+        else
+            echo -e "${YELLOW}⏳ Loadgenerators: $LOADGEN_RUNNING/$LOADGEN_TOTAL Running${NC}"
+            echo -e "${YELLOW}⏳ Utilisateurs simulés: $USERS_SIMULATED/$USER_COUNT (démarrage...)${NC}"
+        fi
+        echo ""
+
+        # HPAs
+        echo -e "${BLUE}━━━ AUTO-SCALING (HPAs) ━━━${NC}"
+        kubectl get hpa -n $NAMESPACE 2>/dev/null | head -6 || echo "  Pas de HPA configuré"
+        echo ""
+
+        # Pods count
+        echo -e "${BLUE}━━━ NOMBRE DE PODS PAR SERVICE ━━━${NC}"
+        printf "  %-25s : %s\n" "Frontend" "$(kubectl get pods -n $NAMESPACE -l app=frontend --no-headers 2>/dev/null | wc -l | tr -d ' ')"
+        printf "  %-25s : %s\n" "Product Catalog" "$(kubectl get pods -n $NAMESPACE -l app=productcatalogservice --no-headers 2>/dev/null | wc -l | tr -d ' ')"
+        printf "  %-25s : %s\n" "Checkout" "$(kubectl get pods -n $NAMESPACE -l app=checkoutservice --no-headers 2>/dev/null | wc -l | tr -d ' ')"
+        printf "  %-25s : %s\n" "Cart" "$(kubectl get pods -n $NAMESPACE -l app=cartservice --no-headers 2>/dev/null | wc -l | tr -d ' ')"
+        printf "  %-25s : %s\n" "Recommendation" "$(kubectl get pods -n $NAMESPACE -l app=recommendationservice --no-headers 2>/dev/null | wc -l | tr -d ' ')"
+        echo ""
+
+        # Nodes
+        echo -e "${BLUE}━━━ NODES (Cluster Autoscaler) ━━━${NC}"
+        NODE_COUNT=$(kubectl get nodes --no-headers 2>/dev/null | wc -l | tr -d ' ')
+        echo "  Nombre de nodes actifs: $NODE_COUNT"
+        echo ""
+
+        # Top Pods CPU
+        echo -e "${BLUE}━━━ TOP 5 PODS (CPU) ━━━${NC}"
+        kubectl top pods -n $NAMESPACE --no-headers 2>/dev/null | sort -k2 -hr | head -5 | awk '{printf "  %-45s %s\n", $1, $2}' || echo "  Metrics Server non disponible"
+        echo ""
+
+        # Instructions
+        echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "${CYAN}Appuyez sur Ctrl+C pour arrêter la surveillance${NC}"
+        echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+
+        # Pause avant le prochain refresh
+        sleep 5
+    done
+}
+
+# Lancer la surveillance
+monitor_test
 
 

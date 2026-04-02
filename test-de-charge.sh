@@ -122,8 +122,10 @@ while true; do
     echo "  3) 5000 utilisateurs   (50 loadgenerators) ${RED}[ATTENTION: Charge élevée]${NC}"
     echo "  4) 10000 utilisateurs  (100 loadgenerators) ${RED}[DANGER: Très haute charge]${NC}"
     echo "  5) Nombre personnalisé"
+    echo "  6) 15000 utilisateurs  (150 loadgenerators) ${RED}[BLACK FRIDAY MODE]${NC}"
+    echo "  7) 20000 utilisateurs  (200 loadgenerators) ${RED}[EXTREME LOAD]${NC}"
     echo ""
-    read -p "Votre choix [1-5]: " choice
+    read -p "Votre choix [1-7]: " choice
 
     case $choice in
         1)
@@ -154,8 +156,18 @@ while true; do
             fi
             break
             ;;
+        6)
+            USERS=15000
+            REPLICAS=150
+            break
+            ;;
+        7)
+            USERS=20000
+            REPLICAS=200
+            break
+            ;;
         *)
-            echo -e "${RED}Choix invalide. Veuillez choisir entre 1 et 5.${NC}"
+            echo -e "${RED}Choix invalide. Veuillez choisir entre 1 et 7.${NC}"
             echo ""
             ;;
     esac

@@ -1,5 +1,9 @@
 # 📦 Ressources Installées - Black Friday Survival
 
+> ✅ **Statut**: Système opérationnel | Dernière mise à jour: 3 avril 2026  
+> 🌍 **Région**: eu-west-1  
+> 🔗 **URL**: http://a1d60cd154e58498aa759b79dcd0b6d3-1630945732.eu-west-1.elb.amazonaws.com
+
 ## 🎯 Vue d'ensemble
 
 **Total: 149 ressources Terraform déployées**

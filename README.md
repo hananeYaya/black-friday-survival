@@ -3,6 +3,46 @@
 </p> -->
 ![Continuous Integration](https://github.com/GoogleCloudPlatform/microservices-demo/workflows/Continuous%20Integration%20-%20Main/Release/badge.svg)
 
+# 🛍️ Black Friday Survival - Online Boutique sur AWS EKS
+
+> ⚡ **Démarrage rapide**: Exécutez `./bfs.sh` et choisissez une option !
+
+## 🎯 À Propos de ce Projet
+
+Ce projet déploie l'application **Online Boutique** de Google sur **AWS EKS** avec toute l'infrastructure nécessaire pour gérer un trafic Black Friday :
+- ✅ Cluster EKS haute disponibilité (3 AZs)
+- ✅ Autoscaling automatique (HPA + Cluster Autoscaler)  
+- ✅ Monitoring avec CloudWatch, Prometheus & Grafana
+- ✅ Tests de charge avec Locust
+- ✅ Sécurité avec WAF, KMS, Network Policies
+
+**Région AWS**: `eu-west-1` ⚠️  
+**URL de l'application**: http://a1d60cd154e58498aa759b79dcd0b6d3-1630945732.eu-west-1.elb.amazonaws.com
+
+## 📚 Documentation
+
+- 🚀 **[START-HERE.md](START-HERE.md)** - Guide de démarrage rapide
+- 📖 **[DEPLOYMENT-GUIDE.md](DEPLOYMENT-GUIDE.md)** - Guide de déploiement complet
+- 🏗️ **[ARCHITECTURE.md](ARCHITECTURE.md)** - Architecture du système
+- ✅ **[ROLLBACK-COMPLETE.md](ROLLBACK-COMPLETE.md)** - État actuel du système
+
+## ⚡ Démarrage Rapide
+
+```bash
+# 1. Configurer AWS CLI sur eu-west-1
+aws configure set region eu-west-1
+
+# 2. Configurer kubectl
+aws eks update-kubeconfig --region eu-west-1 --name eks-bfs-gp12
+
+# 3. Lancer le menu interactif
+./bfs.sh
+```
+
+---
+
+## 📖 Online Boutique - Documentation Originale
+
 **Online Boutique** is a cloud-first microservices demo application.  The application is a
 web-based e-commerce app where users can browse items, add them to the cart, and purchase them.
 

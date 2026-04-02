@@ -1,8 +1,3 @@
-#!/bin/bash
-
-# Script de test de charge interactif
-# Permet de simuler N utilisateurs avec surveillance en temps réel
-
 set -e
 
 GREEN='\033[0;32m'
@@ -20,7 +15,6 @@ echo -e "${GREEN}${BOLD}║      SCRIPT DE TEST DE CHARGE - BLACK FRIDAY SURVIVA
 echo -e "${GREEN}${BOLD}╚═══════════════════════════════════════════════════════════╝${NC}"
 echo ""
 
-# Fonction pour afficher une barre de progression
 progress_bar() {
     local duration=$1
     local steps=50
@@ -34,10 +28,15 @@ progress_bar() {
     echo -e "] Done!"
 }
 
-# Fonction pour surveiller en temps réel
 monitor_test() {
     local deployment_name=$1
     local target_users=$2
+    local duration=$3
+
+    local log_file="load-test-report-${deployment_name}.log"
+    echo "Timestamp,Loadgen_Running,Loadgen_Total,Users_Simulated,Nodes,Pods_Frontend,Pods_Product,Pods_Checkout,Pods_Cart,Pods_Rec,Top_CPU" > "$log_file"
+
+    local start_time=$(date +%s)
 
     clear
     echo -e "${CYAN}${BOLD}╔═══════════════════════════════════════════════════════════╗${NC}"
@@ -46,34 +45,34 @@ monitor_test() {
     echo ""
 
     while true; do
-        # Effacer l'écran pour la mise à jour
+        local current_time=$(date +%s)
+        if [ $((current_time - start_time)) -ge $duration ]; then
+            break
+        fi
+
         tput cup 4 0
 
-        # Date et heure
-        echo -e "${YELLOW}📅 $(date '+%Y-%m-%d %H:%M:%S')${NC}"
+        echo -e "${YELLOW}$(date '+%Y-%m-%d %H:%M:%S')${NC}"
         echo ""
 
-        # Loadgenerators
         echo -e "${BLUE}━━━ LOADGENERATORS (Charge simulée) ━━━${NC}"
         LOADGEN_RUNNING=$(kubectl get pods -l app=$deployment_name --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l | tr -d ' ')
         LOADGEN_TOTAL=$(kubectl get pods -l app=$deployment_name --no-headers 2>/dev/null | wc -l | tr -d ' ')
         USERS=$((LOADGEN_RUNNING * 100))
 
         if [ "$LOADGEN_RUNNING" -eq "$LOADGEN_TOTAL" ]; then
-            echo -e "${GREEN}✅ Loadgenerators: $LOADGEN_RUNNING/$LOADGEN_TOTAL Running${NC}"
-            echo -e "${GREEN}✅ Utilisateurs simulés: $USERS/$target_users${NC}"
+            echo -e "${GREEN} Loadgenerators: $LOADGEN_RUNNING/$LOADGEN_TOTAL Running${NC}"
+            echo -e "${GREEN} Utilisateurs simulés: $USERS/$target_users${NC}"
         else
-            echo -e "${YELLOW}⏳ Loadgenerators: $LOADGEN_RUNNING/$LOADGEN_TOTAL Running${NC}"
-            echo -e "${YELLOW}⏳ Utilisateurs simulés: $USERS/$target_users (démarrage...)${NC}"
+            echo -e "${YELLOW} Loadgenerators: $LOADGEN_RUNNING/$LOADGEN_TOTAL Running${NC}"
+            echo -e "${YELLOW} Utilisateurs simulés: $USERS/$target_users (démarrage...)${NC}"
         fi
         echo ""
 
-        # HPAs
         echo -e "${BLUE}━━━ AUTO-SCALING (HPAs) ━━━${NC}"
         kubectl get hpa 2>/dev/null | head -6 || echo "Pas de HPA configuré"
         echo ""
 
-        # Pods count
         echo -e "${BLUE}━━━ NOMBRE DE PODS PAR SERVICE ━━━${NC}"
         printf "%-25s : %s\n" "Frontend" "$(kubectl get pods -l app=frontend --no-headers 2>/dev/null | wc -l | tr -d ' ')"
         printf "%-25s : %s\n" "Product Catalog" "$(kubectl get pods -l app=productcatalogservice --no-headers 2>/dev/null | wc -l | tr -d ' ')"
@@ -82,39 +81,86 @@ monitor_test() {
         printf "%-25s : %s\n" "Recommendation" "$(kubectl get pods -l app=recommendationservice --no-headers 2>/dev/null | wc -l | tr -d ' ')"
         echo ""
 
-        # Nodes
         echo -e "${BLUE}━━━ NODES (Cluster Autoscaler) ━━━${NC}"
         NODE_COUNT=$(kubectl get nodes --no-headers 2>/dev/null | wc -l | tr -d ' ')
         echo "Nombre de nodes actifs: $NODE_COUNT"
         echo ""
 
-        # Top Pods CPU
         echo -e "${BLUE}━━━ TOP 5 PODS (CPU) ━━━${NC}"
         kubectl top pods --no-headers 2>/dev/null | sort -k2 -hr | head -5 || echo "Metrics Server non disponible"
         echo ""
 
-        # Instructions
+        local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+        local pods_frontend=$(kubectl get pods -l app=frontend --no-headers 2>/dev/null | wc -l | tr -d ' ')
+        local pods_product=$(kubectl get pods -l app=productcatalogservice --no-headers 2>/dev/null | wc -l | tr -d ' ')
+        local pods_checkout=$(kubectl get pods -l app=checkoutservice --no-headers 2>/dev/null | wc -l | tr -d ' ')
+        local pods_cart=$(kubectl get pods -l app=cartservice --no-headers 2>/dev/null | wc -l | tr -d ' ')
+        local pods_rec=$(kubectl get pods -l app=recommendationservice --no-headers 2>/dev/null | wc -l | tr -d ' ')
+        local top_cpu=$(kubectl top pods --no-headers 2>/dev/null | sort -k2 -hr | head -1 | awk '{print $2}' | tr -d 'm')
+        echo "$timestamp,$LOADGEN_RUNNING,$LOADGEN_TOTAL,$USERS,$NODE_COUNT,$pods_frontend,$pods_product,$pods_checkout,$pods_cart,$pods_rec,$top_cpu" >> "$log_file"
+
         echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-        echo -e "${CYAN}Appuyez sur Ctrl+C pour arrêter la surveillance${NC}"
+        echo -e "${CYAN}Test en cours... Fin dans $((duration - (current_time - start_time))) secondes${NC}"
         echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
-        # Pause avant le prochain refresh
         sleep 5
     done
+
+    generate_report "$log_file" "$deployment_name" "$target_users" "$duration"
 }
 
-# Changement de répertoire vers le dossier du script
+generate_report() {
+    local log_file=$1
+    local deployment_name=$2
+    local target_users=$3
+    local duration=$4
+
+    echo ""
+    echo -e "${YELLOW}${BOLD}GÉNÉRATION DU RAPPORT${NC}"
+    echo ""
+
+    local total_entries=$(($(wc -l < "$log_file") - 1))  
+    if [ $total_entries -gt 0 ]; then
+        local avg_nodes=$(awk -F',' 'NR>1 {sum+=$5} END {if(NR>1) print sum/(NR-1); else print 0}' "$log_file")
+        local max_nodes=$(awk -F',' 'NR>1 {if($5 > max) max=$5} END {print max}' "$log_file")
+        local avg_cpu=$(awk -F',' 'NR>1 && $11 != "" {sum+=$11; count++} END {if(count>0) print sum/count; else print 0}' "$log_file")
+        local max_pods_frontend=$(awk -F',' 'NR>1 {if($6 > max) max=$6} END {print max}' "$log_file")
+        local max_pods_product=$(awk -F',' 'NR>1 {if($7 > max) max=$7} END {print max}' "$log_file")
+        local max_pods_checkout=$(awk -F',' 'NR>1 {if($8 > max) max=$8} END {print max}' "$log_file")
+        local max_pods_cart=$(awk -F',' 'NR>1 {if($9 > max) max=$9} END {print max}' "$log_file")
+        local max_pods_rec=$(awk -F',' 'NR>1 {if($10 > max) max=$10} END {print max}' "$log_file")
+
+        echo -e "${GREEN}Rapport de test de charge${NC}"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "Test: $deployment_name"
+        echo "Utilisateurs simulés: $target_users"
+        echo "Durée: $((duration / 60)) minutes"
+        echo "Points de données: $total_entries"
+        echo ""
+        echo "Statistiques:"
+        echo "  - Nombre moyen de nodes: ${avg_nodes%.*}"
+        echo "  - Nombre max de nodes: $max_nodes"
+        echo "  - CPU moyen (top pod): ${avg_cpu%.*}m"
+        echo ""
+        echo "Pods max par service:"
+        echo "  - Frontend: $max_pods_frontend"
+        echo "  - Product Catalog: $max_pods_product"
+        echo "  - Checkout: $max_pods_checkout"
+        echo "  - Cart: $max_pods_cart"
+        echo "  - Recommendation: $max_pods_rec"
+        echo ""
+        echo "Fichier de log complet: $log_file"
+    else
+        echo -e "${RED}Aucune donnée collectée pour le rapport${NC}"
+    fi
+}
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
-
-# ═══════════════════════════════════════════════════════════
-# ÉTAPE 1 : CONFIGURATION
-# ═══════════════════════════════════════════════════════════
 
 echo -e "${YELLOW}${BOLD}[ÉTAPE 1/5] Configuration du test${NC}"
 echo ""
 
-# Demander le nombre d'utilisateurs
 while true; do
     echo -e "${CYAN}Combien d'utilisateurs voulez-vous simuler ?${NC}"
     echo "  1) 1000 utilisateurs   (10 loadgenerators)"
@@ -174,15 +220,48 @@ while true; do
 done
 
 echo ""
-echo -e "${GREEN}✅ Configuration: $USERS utilisateurs ($REPLICAS loadgenerators)${NC}"
+echo -e "${GREEN}Configuration: $USERS utilisateurs ($REPLICAS loadgenerators)${NC}"
 echo ""
 
-# Nom du déploiement
+echo -e "${CYAN}Quelle est la durée du test ?${NC}"
+echo "  1) 5 minutes"
+echo "  2) 10 minutes"
+echo "  3) 15 minutes"
+echo "  4) 30 minutes"
+echo "  5) Durée personnalisée"
+echo ""
+read -p "Votre choix [1-5]: " duration_choice
+
+case $duration_choice in
+    1)
+        DURATION=300
+        ;;
+    2)
+        DURATION=600
+        ;;
+    3)
+        DURATION=900
+        ;;
+    4)
+        DURATION=1800
+        ;;
+    5)
+        read -p "Durée en minutes: " minutes
+        DURATION=$((minutes * 60))
+        ;;
+    *)
+        DURATION=600  
+        ;;
+esac
+
+echo ""
+echo -e "${GREEN} Durée: $((DURATION / 60)) minutes${NC}"
+echo ""
+
 DEPLOYMENT_NAME="loadgenerator-test-${USERS}"
 YAML_FILE="loadgenerator-${USERS}.yaml"
 
-# Confirmation
-echo -e "${YELLOW}⚠️  ATTENTION${NC}"
+echo -e "${YELLOW}  ATTENTION${NC}"
 echo "Ce test va créer $REPLICAS pods qui vont générer $USERS requêtes simultanées."
 echo "Le Cluster Autoscaler va probablement ajouter des nodes supplémentaires."
 echo ""
@@ -195,15 +274,11 @@ fi
 
 echo ""
 
-# ═══════════════════════════════════════════════════════════
-# ÉTAPE 2 : CRÉATION DU YAML
-# ═══════════════════════════════════════════════════════════
-
 echo -e "${YELLOW}${BOLD}[ÉTAPE 2/5] Préparation du fichier de configuration${NC}"
 echo ""
 
 if [ -f "$YAML_FILE" ]; then
-    echo -e "${GREEN}✅ Le fichier $YAML_FILE existe déjà${NC}"
+    echo -e "${GREEN}Le fichier $YAML_FILE existe déjà${NC}"
 else
     echo -e "${CYAN}Création du fichier $YAML_FILE...${NC}"
 
@@ -244,14 +319,10 @@ spec:
             memory: 512Mi
 EOF
 
-    echo -e "${GREEN}✅ Fichier $YAML_FILE créé${NC}"
+    echo -e "${GREEN}Fichier $YAML_FILE créé${NC}"
 fi
 
 echo ""
-
-# ═══════════════════════════════════════════════════════════
-# ÉTAPE 3 : VÉRIFICATION DE L'INFRASTRUCTURE
-# ═══════════════════════════════════════════════════════════
 
 echo -e "${YELLOW}${BOLD}[ÉTAPE 3/5] Vérification de l'infrastructure${NC}"
 echo ""
@@ -263,10 +334,9 @@ echo "  - Nodes: $CURRENT_NODES"
 echo "  - Pods: $CURRENT_PODS"
 echo ""
 
-# Vérifier les HPAs
 HPA_COUNT=$(kubectl get hpa --no-headers 2>/dev/null | wc -l | tr -d ' ')
 if [ "$HPA_COUNT" -lt 5 ]; then
-    echo -e "${YELLOW}⚠️  Nombre de HPAs configurés: $HPA_COUNT/5${NC}"
+    echo -e "${YELLOW}  Nombre de HPAs configurés: $HPA_COUNT/5${NC}"
     read -p "Voulez-vous configurer les HPAs maintenant ? (o/n): " setup_hpa
 
     if [[ $setup_hpa =~ ^[Oo]$ ]]; then
@@ -276,17 +346,13 @@ if [ "$HPA_COUNT" -lt 5 ]; then
         kubectl autoscale deployment checkoutservice --cpu-percent=70 --min=2 --max=15 2>/dev/null || echo "  HPA checkout déjà configuré"
         kubectl autoscale deployment cartservice --cpu-percent=70 --min=2 --max=10 2>/dev/null || echo "  HPA cart déjà configuré"
         kubectl autoscale deployment recommendationservice --cpu-percent=70 --min=2 --max=10 2>/dev/null || echo "  HPA recommendation déjà configuré"
-        echo -e "${GREEN}✅ HPAs configurés${NC}"
+        echo -e "${GREEN} HPAs configurés${NC}"
     fi
 else
-    echo -e "${GREEN}✅ HPAs configurés: $HPA_COUNT${NC}"
+    echo -e "${GREEN} HPAs configurés: $HPA_COUNT${NC}"
 fi
 
 echo ""
-
-# ═══════════════════════════════════════════════════════════
-# ÉTAPE 4 : DÉPLOIEMENT DES LOADGENERATORS
-# ═══════════════════════════════════════════════════════════
 
 echo -e "${YELLOW}${BOLD}[ÉTAPE 4/5] Déploiement des loadgenerators${NC}"
 echo ""
@@ -295,7 +361,7 @@ echo "Déploiement de $REPLICAS loadgenerators..."
 kubectl apply -f "$YAML_FILE"
 
 echo ""
-echo -e "${GREEN}✅ Déploiement lancé${NC}"
+echo -e "${GREEN} Déploiement lancé${NC}"
 echo ""
 
 echo "Attente du démarrage des pods (60 secondes)..."
@@ -303,7 +369,6 @@ progress_bar 60
 
 echo ""
 
-# Vérifier l'état du déploiement
 LOADGEN_RUNNING=$(kubectl get pods -l app=$DEPLOYMENT_NAME --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l | tr -d ' ')
 LOADGEN_TOTAL=$(kubectl get pods -l app=$DEPLOYMENT_NAME --no-headers 2>/dev/null | wc -l | tr -d ' ')
 
@@ -314,14 +379,11 @@ echo "  - Utilisateurs simulés: $((LOADGEN_RUNNING * 100))/$USERS"
 echo ""
 
 if [ "$LOADGEN_RUNNING" -lt "$LOADGEN_TOTAL" ]; then
-    echo -e "${YELLOW}⏳ Tous les pods ne sont pas encore démarrés.${NC}"
+    echo -e "${YELLOW} Tous les pods ne sont pas encore démarrés.${NC}"
     echo "   Ils vont continuer à démarrer en arrière-plan."
     echo ""
 fi
 
-# ═══════════════════════════════════════════════════════════
-# ÉTAPE 5 : SURVEILLANCE EN TEMPS RÉEL
-# ═══════════════════════════════════════════════════════════
 
 echo -e "${YELLOW}${BOLD}[ÉTAPE 5/5] Surveillance en temps réel${NC}"
 echo ""
@@ -331,7 +393,6 @@ echo ""
 echo "Appuyez sur Ctrl+C pour arrêter la surveillance (les tests continueront en arrière-plan)"
 sleep 3
 
-# Trap Ctrl+C pour sortir proprement de la surveillance
 trap ctrl_c INT
 function ctrl_c() {
     echo ""
@@ -344,14 +405,13 @@ function ctrl_c() {
     exit 0
 }
 
-# Fonction pour afficher les commandes d'arrêt
 show_stop_commands() {
     echo -e "${GREEN}${BOLD}════════════════════════════════════════════════════════════${NC}"
     echo -e "${GREEN}${BOLD}  TEST DE CHARGE EN COURS - $USERS UTILISATEURS${NC}"
     echo -e "${GREEN}${BOLD}════════════════════════════════════════════════════════════${NC}"
     echo ""
 
-    echo -e "${CYAN}📊 INFORMATIONS DU TEST${NC}"
+    echo -e "${CYAN} INFORMATIONS DU TEST${NC}"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "Deployment      : $DEPLOYMENT_NAME"
     echo "Replicas        : $REPLICAS loadgenerators"
@@ -359,7 +419,7 @@ show_stop_commands() {
     echo "Fichier YAML    : $YAML_FILE"
     echo ""
 
-    echo -e "${YELLOW}📈 COMMANDES DE SURVEILLANCE${NC}"
+    echo -e "${YELLOW} COMMANDES DE SURVEILLANCE${NC}"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "Surveiller les HPAs (auto-scaling):"
     echo "  ${GREEN}watch kubectl get hpa${NC}"
@@ -375,7 +435,7 @@ show_stop_commands() {
     echo "  ${GREEN}kubectl top nodes${NC}"
     echo ""
 
-    echo -e "${RED}🛑 COMMANDES POUR ARRÊTER LE TEST${NC}"
+    echo -e "${RED} COMMANDES POUR ARRÊTER LE TEST${NC}"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
     echo "Option 1 : Arrêt progressif (RECOMMANDÉ)"
@@ -407,13 +467,12 @@ show_stop_commands() {
     echo "  ${RED}./stop-test.sh $DEPLOYMENT_NAME${NC}"
     echo ""
 
-    echo -e "${CYAN}💡 CONSEIL${NC}"
+    echo -e "${CYAN} CONSEIL${NC}"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "Laissez le test tourner 15-30 minutes pour observer le comportement"
     echo "du cluster sous charge et l'auto-scaling en action."
     echo ""
 }
 
-# Lancer la surveillance
-monitor_test "$DEPLOYMENT_NAME" "$USERS"
+monitor_test "$DEPLOYMENT_NAME" "$USERS" "$DURATION"
 

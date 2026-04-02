@@ -24,6 +24,7 @@ Ce projet déploie l'application **Online Boutique** de Google sur **AWS EKS** a
 - 🚀 **[START-HERE.md](START-HERE.md)** - Guide de démarrage rapide
 - 📖 **[DEPLOYMENT-GUIDE.md](DEPLOYMENT-GUIDE.md)** - Guide de déploiement complet
 - 🏗️ **[ARCHITECTURE.md](ARCHITECTURE.md)** - Architecture du système
+- 📊 **[CAPACITY-ANALYSIS.md](CAPACITY-ANALYSIS.md)** - Analyse de capacité et recommandations
 - ✅ **[ROLLBACK-COMPLETE.md](ROLLBACK-COMPLETE.md)** - État actuel du système
 
 ## ⚡ Démarrage Rapide

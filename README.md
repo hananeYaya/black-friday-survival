@@ -7,25 +7,40 @@
 
 > ⚡ **Démarrage rapide**: Exécutez `./bfs.sh` et choisissez une option !
 
+> 🔴 **IMPORTANT** : Capacité actuelle testée et confirmée : **5,000 utilisateurs concurrents MAX**  
+> Au-delà, le système devient instable. Consultez [BLACK-FRIDAY-REALITY.md](BLACK-FRIDAY-REALITY.md) pour plus de détails.
+
 ## 🎯 À Propos de ce Projet
 
 Ce projet déploie l'application **Online Boutique** de Google sur **AWS EKS** avec toute l'infrastructure nécessaire pour gérer un trafic Black Friday :
 - ✅ Cluster EKS haute disponibilité (3 AZs)
 - ✅ Autoscaling automatique (HPA + Cluster Autoscaler)  
 - ✅ Monitoring avec CloudWatch, Prometheus & Grafana
-- ✅ Tests de charge avec Locust
-- ✅ Sécurité avec WAF, KMS, Network Policies
+- ✅ Tests de charge intégrés (menu bfs.sh)
+- ✅ Sécurité avec WAF, KMS, Network Policies, Pod Security Standards
+- ⚠️ **Capacité actuelle : 5,000 users concurrents**
 
 **Région AWS**: `eu-west-1` ⚠️  
-**URL de l'application**: http://a1d60cd154e58498aa759b79dcd0b6d3-1630945732.eu-west-1.elb.amazonaws.com
+**Accès Frontend**: Via port-forward `kubectl port-forward -n online-boutique svc/frontend 8080:80`
 
 ## 📚 Documentation
 
+### Guides Essentiels
+
 - 🚀 **[START-HERE.md](START-HERE.md)** - Guide de démarrage rapide
+- 🔴 **[BLACK-FRIDAY-REALITY.md](BLACK-FRIDAY-REALITY.md)** - ⭐ Limites réelles du système (LIRE EN PREMIER)
+- 💰 **[COUTS-AWS.md](COUTS-AWS.md)** - ⭐ Coûts détaillés et estimations (DOCUMENT UNIQUE)
+- 📊 **[CAPACITY-ANALYSIS.md](CAPACITY-ANALYSIS.md)** - Analyse détaillée de capacité
 - 📖 **[DEPLOYMENT-GUIDE.md](DEPLOYMENT-GUIDE.md)** - Guide de déploiement complet
 - 🏗️ **[ARCHITECTURE.md](ARCHITECTURE.md)** - Architecture du système
-- 📊 **[CAPACITY-ANALYSIS.md](CAPACITY-ANALYSIS.md)** - Analyse de capacité et recommandations
-- ✅ **[ROLLBACK-COMPLETE.md](ROLLBACK-COMPLETE.md)** - État actuel du système
+
+### Guides Opérationnels
+
+- 🧪 **[LOAD-TEST-MONITORING-GUIDE.md](LOAD-TEST-MONITORING-GUIDE.md)** - Comment surveiller un test de charge
+- 📊 **[GRAFANA-GUIDE.md](GRAFANA-GUIDE.md)** - Utilisation de Grafana
+- 📦 **[RESOURCES-INSTALLED.md](RESOURCES-INSTALLED.md)** - Liste des ressources déployées
+- 🔧 **[FIX-LOAD-TEST-ISSUE.md](FIX-LOAD-TEST-ISSUE.md)** - Résolution problèmes Pod Security
+- 📝 **[SCRIPTS-CLEANUP.md](SCRIPTS-CLEANUP.md)** - Scripts disponibles
 
 ## ⚡ Démarrage Rapide
 

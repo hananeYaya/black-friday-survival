@@ -212,11 +212,16 @@
 
 #### Grafana
 - **Service Type** : ClusterIP (accès via port-forward)
-- **Admin Password** : Configurable via `grafana_admin_password`
+- **Admin Username** : `admin`
+- **Admin Password** : `BlackFriday2024!` (récupéré via script ou secret K8s)
 - **Storage** : 10Gi (PVC avec StorageClass gp3)
-- **Dashboards Pré-installés** :
-  - Kubernetes Cluster (ID: 7249)
-  - Kubernetes Pods (ID: 6417)
+- **Accès** : `sh access-grafana.sh` ou `http://localhost:3000` (après port-forward)
+- **Dashboards Personnalisés** (4 dashboards) :
+  - **Black Friday - Vue d'Ensemble** : Vision globale instantanée (CPU, Memory, Pods)
+  - **Black Friday - Microservices** : Monitoring par service (Frontend, Backend, Redis)
+  - **Black Friday - Infrastructure** : Nodes, HPA, Capacity planning
+  - **Black Friday - Performance & SLOs** : SLOs, Latency, Throughput, Error rates
+- **Folder** : Black Friday Survival
 
 #### Alertmanager
 - **Activé** : Oui

@@ -1,5 +1,10 @@
 # Architecture Complète - Black Friday Survival
 
+> ✅ **Statut Système**: Opérationnel  
+> 🌍 **Région AWS**: eu-west-1  
+> 📊 **Noeuds**: 4/4 Ready  
+> 🔗 **Frontend URL**: http://a1d60cd154e58498aa759b79dcd0b6d3-1630945732.eu-west-1.elb.amazonaws.com
+
 ## 🏗️ Infrastructure AWS
 
 ### Multi-AZ (3 Zones de Disponibilité)

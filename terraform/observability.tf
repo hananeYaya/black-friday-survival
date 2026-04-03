@@ -59,27 +59,31 @@ resource "helm_release" "kube_prometheus_stack" {
           "dashboardproviders.yaml" = {
             apiVersion = 1
             providers = [{
-              name = "default"
+              name = "Black Friday"
               orgId = 1
-              folder = ""
+              folder = "Black Friday Survival"
               type = "file"
               disableDeletion = false
               editable = true
               options = {
-                path = "/var/lib/grafana/dashboards/default"
+                path = "/var/lib/grafana/dashboards/black-friday"
               }
             }]
           }
         }
         dashboards = {
-          default = {
-            kubernetes-cluster = {
-              url = "https://grafana.com/api/dashboards/7249/revisions/1/download"
-              datasourceName = "Prometheus"
+          "black-friday" = {
+            overview = {
+              json = file("${path.module}/../grafana-dashboards/01-overview.json")
             }
-            kubernetes-pods = {
-              url = "https://grafana.com/api/dashboards/6417/revisions/1/download"
-              datasourceName = "Prometheus"
+            microservices = {
+              json = file("${path.module}/../grafana-dashboards/02-microservices.json")
+            }
+            infrastructure = {
+              json = file("${path.module}/../grafana-dashboards/03-infrastructure.json")
+            }
+            performance = {
+              json = file("${path.module}/../grafana-dashboards/04-performance.json")
             }
           }
         }

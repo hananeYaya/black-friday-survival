@@ -63,6 +63,8 @@
 
 ### 1️⃣ Configuration AWS
 
+> ⚠️ **ATTENTION**: Le cluster EKS est déployé dans la région **eu-west-1**. Assurez-vous d'utiliser cette région pour toutes les commandes AWS et kubectl.
+
 ```bash
 # Vérifier l'identité AWS
 aws sts get-caller-identity

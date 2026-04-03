@@ -33,6 +33,8 @@ spec:
         runAsGroup: 1000
         runAsNonRoot: true
         runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: server
           securityContext:
@@ -42,7 +44,9 @@ spec:
                 - ALL
             privileged: false
             readOnlyRootFilesystem: true
-          image: checkoutservice
+            seccompProfile:
+              type: RuntimeDefault
+          image: gcr.io/google-samples/microservices-demo/checkoutservice:v0.10.1
           ports:
           - containerPort: 5050
           readinessProbe:

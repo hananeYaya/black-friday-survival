@@ -37,6 +37,8 @@ spec:
         runAsGroup: 1000
         runAsNonRoot: true
         runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
       initContainers:
       - command:
         - /bin/sh
@@ -64,6 +66,8 @@ spec:
               - ALL
           privileged: false
           readOnlyRootFilesystem: true
+          seccompProfile:
+            type: RuntimeDefault
         image: busybox:latest
         env:
         - name: FRONTEND_ADDR
@@ -77,7 +81,9 @@ spec:
               - ALL
           privileged: false
           readOnlyRootFilesystem: true
-        image: loadgenerator
+          seccompProfile:
+            type: RuntimeDefault
+        image: gcr.io/google-samples/microservices-demo/loadgenerator:v0.10.1
         env:
         - name: FRONTEND_ADDR
           value: "frontend:80"

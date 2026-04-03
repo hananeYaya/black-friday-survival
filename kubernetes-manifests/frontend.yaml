@@ -35,6 +35,8 @@ spec:
         runAsGroup: 1000
         runAsNonRoot: true
         runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: server
           securityContext:
@@ -44,6 +46,8 @@ spec:
                 - ALL
             privileged: false
             readOnlyRootFilesystem: true
+            seccompProfile:
+              type: RuntimeDefault
           image: gcr.io/google-samples/microservices-demo/frontend:v0.10.1
           ports:
           - containerPort: 8080

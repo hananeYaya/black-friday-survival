@@ -43,7 +43,7 @@ spec:
               - ALL
           privileged: false
           readOnlyRootFilesystem: true
-        image: cartservice
+        image: gcr.io/google-samples/microservices-demo/cartservice:v0.10.1
         ports:
         - containerPort: 7070
         env:
@@ -106,6 +106,8 @@ spec:
         runAsGroup: 1000
         runAsNonRoot: true
         runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
       - name: redis
         securityContext:
@@ -115,6 +117,8 @@ spec:
               - ALL
           privileged: false
           readOnlyRootFilesystem: true
+          seccompProfile:
+            type: RuntimeDefault
         image: redis:alpine
         ports:
         - containerPort: 6379

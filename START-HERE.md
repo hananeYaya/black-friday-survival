@@ -1,5 +1,20 @@
 # 🚀 Black Friday Survival - Guide Rapide
 
+> ⚠️ **IMPORTANT**: Le cluster EKS est dans la région **eu-west-1** (PAS eu-south-2)
+
+## ⚡ Configuration Initiale
+
+```bash
+# Configurer AWS CLI sur la bonne région
+aws configure set region eu-west-1
+
+# Configurer kubectl
+aws eks update-kubeconfig --region eu-west-1 --name eks-bfs-gp12
+
+# Vérifier la connexion
+kubectl get nodes
+```
+
 ## ✨ UN SEUL SCRIPT À RETENIR
 
 ```bash

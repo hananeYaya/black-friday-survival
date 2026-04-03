@@ -150,6 +150,12 @@ spec:
       labels:
         app: $DEPLOYMENT_NAME
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
       - name: main
         image: gcr.io/google-samples/microservices-demo/loadgenerator:v0.10.1
@@ -165,6 +171,15 @@ spec:
           limits:
             cpu: 500m
             memory: 512Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          runAsUser: 1000
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
 EOF
 
     echo "Déploiement en cours..."
